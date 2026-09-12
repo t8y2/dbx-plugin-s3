@@ -1,10 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="DBX S3">
   <defs>
-    <linearGradient id="g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#6d5dfc"/>
-      <stop offset="1" stop-color="#2cc9a7"/>
+    <linearGradient id="background" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#163a63"/>
+      <stop offset="1" stop-color="#159a9c"/>
+    </linearGradient>
+    <linearGradient id="bucket" x1="18" y1="19" x2="46" y2="49" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/>
+      <stop offset="1" stop-color="#d9f7f3"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="url(#g)"/>
-  <path fill="#fff" d="M20 18h18a10 10 0 0 1 0 20H28v8h-8V18Zm8 8v4h10a2 2 0 1 0 0-4H28Z"/>
+  <rect width="64" height="64" rx="16" fill="url(#background)"/>
+  <path fill="url(#bucket)" d="M16 21v22c0 4 7.2 7 16 7s16-3 16-7V21H16Z"/>
+  <ellipse cx="32" cy="21" rx="16" ry="7" fill="#fff"/>
+  <ellipse cx="32" cy="21" rx="11" ry="4" fill="#1d7180"/>
+  <path fill="none" stroke="#1d7180" stroke-linecap="round" stroke-width="2" d="M20 31c3 2 7 3 12 3s9-1 12-3M20 40c3 2 7 3 12 3s9-1 12-3"/>
+  <circle cx="43" cy="15" r="5" fill="#ffbd5a"/>
+  <path fill="none" stroke="#7b4a19" stroke-linecap="round" stroke-width="2" d="m40.5 15 1.7 1.7 3.3-3.4"/>
 </svg>

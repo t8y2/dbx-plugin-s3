@@ -1,0 +1,19 @@
+{
+  "name": "@dbx-app/plugin-s3-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "build:watch": "vite build --watch"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "svelte": "^5.38.7",
+    "vite": "^7.1.5"
+  },
+  "dependencies": {
+    "marked": "^15.0.12",
+    "mammoth": "^1.12.2",
+    "xlsx": "^0.18.5"
+  }
+}

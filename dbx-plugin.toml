@@ -1,4 +1,13 @@
 schema_version = 1
 
+[backend]
+language = "go"
+directory = "backend"
+binary = "dbx-plugin-s3"
+
 [package]
 include = ["assets", "ui"]
+
+[dev]
+ui_build = ["npm", "run", "build"]
+ui_watch = ["npm", "run", "build:watch"]

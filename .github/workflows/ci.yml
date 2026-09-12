@@ -1,0 +1,36 @@
+name: Check DBX plugin
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache-dependency-path: backend/go.sum
+      - name: Test backend
+        working-directory: backend
+        run: go test ./...
+      - name: Vet backend
+        working-directory: backend
+        run: go vet ./...
+
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: Install DBX plugin CLI
+        run: npm install --global @dbx-app/plugin-cli@0.1.1
+      - name: Package Linux candidate
+        run: npm install && npm run build && dbx-plugin package . --target linux-x64

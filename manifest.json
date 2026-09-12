@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "io.github.t8y2.s3",
   "name": "DBX S3",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "t8y2",
   "description": "S3-compatible object storage plugin for DBX.",
   "icon": "assets/plugin.svg",
@@ -12,6 +12,9 @@
     "host_api": "1"
   },
   "entrypoints": {
+    "backend": {
+      "executable": "bin/dbx-plugin-s3"
+    },
     "ui": {
       "root": "ui",
       "entry": "ui/index.html"
@@ -19,21 +22,136 @@
   },
   "contributions": [
     {
+      "type": "connection-provider",
+      "id": "io.github.t8y2.s3.connection",
+      "label": "S3 connection",
+      "icon": "assets/plugin.svg",
+      "database_type": "s3",
+      "description": "Connect to AWS S3 or an S3-compatible object storage service.",
+      "fields": [
+        {
+          "key": "display_name",
+          "label": "Connection name",
+          "type": "text",
+          "default": "S3 connection",
+          "binding": "name",
+          "required": true
+        },
+        {
+          "key": "endpoint_protocol",
+          "label": "Endpoint protocol",
+          "type": "radio",
+          "default": "https",
+          "binding": "config",
+          "required": true,
+          "options": [
+            { "value": "https", "label": "HTTPS" },
+            { "value": "http", "label": "HTTP" }
+          ]
+        },
+        {
+          "key": "endpoint",
+          "label": "Endpoint host",
+          "type": "text",
+          "default": "s3.amazonaws.com",
+          "binding": "config",
+          "required": true,
+          "description": "Host name only; do not include a path."
+        },
+        {
+          "key": "region",
+          "label": "Region",
+          "type": "text",
+          "default": "us-east-1",
+          "binding": "config",
+          "required": true
+        },
+        {
+          "key": "base_path",
+          "label": "Base path",
+          "type": "text",
+          "binding": "config",
+          "required": false,
+          "description": "Optional object prefix mapped to the DBX filesystem root, for example /project/assets."
+        },
+        {
+          "key": "addressing_style",
+          "label": "Addressing style",
+          "type": "select",
+          "default": "auto",
+          "binding": "config",
+          "required": true,
+          "options": [
+            { "value": "auto", "label": "Automatic" },
+            { "value": "path", "label": "Path-style" },
+            { "value": "virtual", "label": "Virtual-hosted" }
+          ]
+        },
+        {
+          "key": "bucket",
+          "label": "Bucket",
+          "type": "text",
+          "binding": "database",
+          "required": true
+        },
+        {
+          "key": "access_key",
+          "label": "Access key",
+          "type": "text",
+          "binding": "username",
+          "required": true
+        },
+        {
+          "key": "secret_key",
+          "label": "Secret key",
+          "type": "password",
+          "binding": "secret",
+          "required": true
+        },
+        {
+          "key": "session_token",
+          "label": "Session token",
+          "type": "password",
+          "binding": "secret",
+          "required": false,
+          "description": "Optional temporary credential token for STS or IAM roles."
+        }
+      ],
+      "workbench": "io.github.t8y2.s3.workbench",
+      "capabilities": ["test", "connect", "disconnect"]
+    },
+    {
       "type": "workbench",
       "id": "io.github.t8y2.s3.workbench",
       "label": "DBX S3",
-      "description": "Sandboxed frontend workbench contributed by DBX S3.",
+      "description": "Browse and manage S3 objects in a custom workbench.",
       "icon": "assets/plugin.svg"
     }
   ],
   "localizations": {
     "zh-CN": {
       "name": "DBX S3",
-      "description": "S3-compatible object storage plugin for DBX.",
+      "description": "S3 兼容对象存储插件。",
       "contributions": {
+        "io.github.t8y2.s3.connection": {
+          "label": "S3 连接",
+          "description": "连接 AWS S3 或 S3 兼容对象存储服务。",
+          "fields": {
+            "display_name": { "label": "连接名称" },
+            "endpoint_protocol": { "label": "端点协议", "options": { "https": "HTTPS", "http": "HTTP" } },
+            "endpoint": { "label": "端点主机", "description": "只填写主机名，不要填写路径。" },
+            "region": { "label": "区域" },
+            "base_path": { "label": "基础路径", "description": "可选的对象前缀，例如 /project/assets。" },
+            "addressing_style": { "label": "寻址方式" },
+            "bucket": { "label": "存储桶" },
+            "access_key": { "label": "访问密钥" },
+            "secret_key": { "label": "秘密密钥" },
+            "session_token": { "label": "会话令牌", "description": "STS 或临时 IAM 凭据的可选令牌。" }
+          }
+        },
         "io.github.t8y2.s3.workbench": {
           "label": "DBX S3",
-          "description": "由插件提供的沙箱前端工作台。"
+          "description": "在自定义工作台中浏览和管理 S3 对象。"
         }
       }
     }

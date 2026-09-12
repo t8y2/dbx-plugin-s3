@@ -1,4 +1,6 @@
 /dist/
+/node_modules/
+/ui/assets/
 /.dbx-dev/
 .dbx-repository-signing-key.env
 .DS_Store
