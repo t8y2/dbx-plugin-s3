@@ -31,6 +31,6 @@ jobs:
         with:
           node-version: '22.x'
       - name: Install DBX plugin CLI
-        run: npm install --global @dbx-app/plugin-cli@0.1.1
+        run: npm install --global @dbx-app/plugin-cli@0.1.2
       - name: Package Linux candidate
         run: npm install && npm run build && dbx-plugin package . --target linux-x64

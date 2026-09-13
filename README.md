@@ -1,4 +1,4 @@
-# DBX S3
+# S3 Browser
 
 S3-compatible object storage plugin for DBX.
 
