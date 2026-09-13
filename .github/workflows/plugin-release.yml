@@ -9,25 +9,18 @@ on:
         description: Existing GitHub Release tag that receives the plugin assets
         required: true
         type: string
-      sdk-ref:
-        description: DBX branch or tag used to build the plugin CLI from source
-        required: true
-        default: dev/plugin-framework-current
-        type: string
 
 permissions:
   contents: write
 
 jobs:
   release:
-    uses: t8y2/dbx/.github/workflows/plugin-release-reusable.yml@65d20caff46518197820d2bc311769788ac144f8
+    uses: t8y2/dbx/.github/workflows/plugin-release-reusable.yml@plugin-cli-v0.1.2
     with:
       release-tag: ${{ github.event.release.tag_name || inputs.release-tag }}
       package-command: npm install && npm run build && dbx-plugin package .
       package-path: dist/*.dbxp
       metadata-path: dist/*.artifact.json
-      plugin-cli-version: 0.1.1
-      install-plugin-cli-from-source: true
-      sdk-ref: ${{ inputs.sdk-ref || 'dev/plugin-framework-current' }}
+      plugin-cli-version: 0.1.2
       build-matrix: >-
         {"include":[{"runner":"ubuntu-24.04","target":"linux-x64"},{"runner":"ubuntu-24.04-arm","target":"linux-arm64"},{"runner":"windows-11-arm","target":"windows-arm64"},{"runner":"windows-2022","target":"windows-x64"},{"runner":"macos-15-intel","target":"darwin-x64"},{"runner":"macos-15","target":"darwin-arm64"}]}

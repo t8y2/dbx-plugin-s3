@@ -4,20 +4,23 @@
   import * as XLSX from "xlsx";
   import ObjectList from "./components/ObjectList.svelte";
   import PreviewPane from "./components/PreviewPane.svelte";
+  import { Button } from "./lib/components/ui/button/index.js";
+  import * as Dialog from "./lib/components/ui/dialog/index.js";
+  import { ArrowUp, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const copy = {
     en: {
-      title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", empty: "This folder is empty.",
+      title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
       loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
-      markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder",
+      markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", rename: "Rename", delete: "Delete", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
     },
     zh: {
-      title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", empty: "此目录为空。",
+      title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
       loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
-      markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹",
+      markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", rename: "重命名", delete: "删除", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
     },
   };
 
@@ -29,8 +32,13 @@
   let selected = $state(null);
   let preview = $state({ kind: "empty", value: "", type: "", truncated: false });
   let loading = $state(false);
+  let operating = $state(false);
   let error = $state("");
   let leftWidth = $state(42);
+  let uploadInput = $state(null);
+  let dialog = $state(null);
+  let dialogOpen = $state(false);
+  let contextMenu = $state(null);
 
   const connectionId = () => context?.connectionId || "";
   const isZh = () => (window.dbxPlugin?.locale || "en").toLowerCase().startsWith("zh");
@@ -71,9 +79,10 @@
   }
 
   async function selectEntry(entry) {
+    contextMenu = null;
     selected = entry;
     if (entry.kind === "directory") {
-      await load(entry.uri);
+      preview = { kind: "empty", value: "", type: text.folder, truncated: false };
       return;
     }
     preview = { kind: "loading", value: "", type: "", truncated: false };
@@ -117,6 +126,125 @@
     }
   }
 
+  function openEntry(entry) {
+    contextMenu = null;
+    if (entry.kind === "directory") void load(entry.uri);
+  }
+
+  function openContextMenu(event, entry) {
+    const menuWidth = 150;
+    const menuHeight = entry.kind === "directory" ? 116 : 80;
+    contextMenu = {
+      entry,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    };
+  }
+
+  function childUri(parent, name, directory = false) {
+    const base = parent.endsWith("/") ? parent : `${parent}/`;
+    return `${base}${encodeURIComponent(name)}${directory ? "/" : ""}`;
+  }
+
+  function containingUri(uri) {
+    const value = uri.replace(/\/$/, "");
+    const slash = value.lastIndexOf("/");
+    return slash <= value.indexOf("://") + 2 ? `${value}/` : `${value.slice(0, slash + 1)}`;
+  }
+
+  async function runOperation(operation) {
+    if (operating) return;
+    operating = true;
+    error = "";
+    try {
+      await operation();
+      await load(currentUri);
+    } catch (cause) {
+      error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
+    } finally {
+      operating = false;
+    }
+  }
+
+  async function createFolder() {
+    dialog = { kind: "create-folder", value: "" };
+    dialogOpen = true;
+  }
+
+  function beginUpload() {
+    uploadInput?.click();
+  }
+
+  async function uploadFiles(event) {
+    const input = event.currentTarget;
+    const files = [...(input.files || [])];
+    input.value = "";
+    if (!files.length) return;
+    await runOperation(async () => {
+      for (const file of files) {
+        if (file.size > 4 * 1024 * 1024) throw new Error(text.uploadLimit);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await invoke("filesystem/write", { uri: childUri(currentUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
+      }
+    });
+  }
+
+  async function renameEntry(entry) {
+    contextMenu = null;
+    dialog = { kind: "rename", entry, value: entry.name };
+    dialogOpen = true;
+  }
+
+  async function deleteEntry(entry) {
+    contextMenu = null;
+    dialog = { kind: "delete", entry, value: "" };
+    dialogOpen = true;
+  }
+
+  function handleDialogOpenChange(open) {
+    dialogOpen = open;
+    if (!open) dialog = null;
+  }
+
+  function cancelDialog() {
+    dialogOpen = false;
+    dialog = null;
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+
+  async function confirmDialog() {
+    const active = dialog;
+    if (!active) return;
+    if (active.kind === "delete") {
+      cancelDialog();
+      await runOperation(async () => {
+        await invoke("filesystem/delete", { uri: active.entry.uri, recursive: active.entry.kind === "directory" });
+        clearPreview();
+      });
+      return;
+    }
+    const name = active.value.trim();
+    if (!name || /[\\/]/.test(name)) {
+      error = text.invalidName;
+      return;
+    }
+    if (active.kind === "rename" && name === active.entry.name) {
+      cancelDialog();
+      return;
+    }
+    cancelDialog();
+    await runOperation(async () => {
+      if (active.kind === "create-folder") {
+        await invoke("filesystem/createDirectory", { uri: childUri(currentUri, name, true) });
+      } else {
+        await invoke("filesystem/rename", { sourceUri: active.entry.uri, targetUri: childUri(containingUri(active.entry.uri), name, active.entry.kind === "directory"), overwrite: false });
+      }
+    });
+  }
+
   function clearPreview() {
     if (["image", "video", "audio"].includes(preview.kind) && preview.value) URL.revokeObjectURL(preview.value);
     selected = null;
@@ -158,40 +286,86 @@
   });
 </script>
 
+<svelte:window onclick={closeContextMenu} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />
+
 <svelte:head><title>S3</title></svelte:head>
 
 <main>
   <div class="toolbar">
-    <button class="secondary" disabled={!parentUri() || loading} onclick={() => load(parentUri())}>{text.up}</button>
-    <input aria-label={text.path} bind:value={currentUri} onkeydown={(event) => event.key === "Enter" && load(currentUri)} />
-    <button class="secondary" disabled={loading} onclick={() => load(currentUri)}>{text.refresh}</button>
+    <div class="path-group">
+      <Button variant="outline" size="icon-sm" aria-label={text.up} title={text.up} disabled={!parentUri() || loading} onclick={() => load(parentUri())}><ArrowUp size={14} /></Button>
+      <input aria-label={text.path} bind:value={currentUri} onkeydown={(event) => event.key === "Enter" && load(currentUri)} />
+    </div>
+    <div class="toolbar-actions">
+      <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
+      <Button variant="outline" size="sm" disabled={loading || operating} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
+      <Button size="sm" disabled={loading || operating} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
+    </div>
+    <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
   </div>
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
-  <section class="split" style={`grid-template-columns: minmax(240px, ${leftWidth}%) 4px minmax(280px, 1fr)`}>
-    <ObjectList {entries} {selected} {loading} {nextCursor} {text} onSelect={selectEntry} onLoadMore={() => load(currentUri, true)} />
+  <section class="split" style={`grid-template-columns: minmax(240px, ${leftWidth}%) 2px minmax(280px, 1fr)`}>
+    <ObjectList {entries} {selected} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} {text} onSheetChange={(value) => (preview = value)} />
+    <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onSheetChange={(value) => (preview = value)} />
   </section>
+  {#if contextMenu}
+    <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
+      {#if contextMenu.entry.kind === "directory"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button>{/if}
+      <button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>
+      <button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>
+    </div>
+  {/if}
+  <Dialog.Root bind:open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+    {#if dialog}
+      <Dialog.Content showCloseButton={false} class="dialog-content">
+        <Dialog.Header>
+          <Dialog.Title>{dialog.kind === "delete" ? text.delete : dialog.kind === "rename" ? text.rename : text.newFolder}</Dialog.Title>
+          {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>{/if}
+        </Dialog.Header>
+        {#if dialog.kind !== "delete"}
+          <label class="dialog-field">{dialog.kind === "rename" ? text.newName : text.folderName}<input bind:value={dialog.value} onkeydown={(event) => event.key === "Enter" && confirmDialog()} /></label>
+        {/if}
+        <Dialog.Footer class="dialog-actions">
+          <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
+          <Button variant={dialog.kind === "delete" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" ? text.delete : text.confirm}</Button>
+        </Dialog.Footer>
+      </Dialog.Content>
+    {/if}
+  </Dialog.Root>
 </main>
 
 <style>
   :global(*) { box-sizing: border-box; }
   :global(body) { margin: 0; min-width: 720px; min-height: 100vh; color: CanvasText; background: Canvas; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-  main { min-height: 100vh; display: flex; flex-direction: column; padding: 22px 26px; background: radial-gradient(circle at 0 0, rgba(109,93,252,.16), transparent 36%), Canvas; }
-  .toolbar { display: flex; align-items: center; }
-  .toolbar { gap: 8px; padding: 10px 0; }.toolbar input { min-width: 0; flex: 1; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 8px; padding: 8px 10px; color: inherit; background: color-mix(in srgb, CanvasText 5%, transparent); font: 12px ui-monospace, monospace; }
-  button { border: 0; border-radius: 8px; padding: 8px 11px; color: white; background: #6d5dfc; font: inherit; font-size: 12px; cursor: pointer; } button.secondary { color: inherit; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); background: transparent; } button:disabled { cursor: default; opacity: .45; }
+  main { min-height: 100vh; display: flex; flex-direction: column; padding: 22px 26px; background: Canvas; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0; }
+  .path-group, .toolbar-actions { display: flex; align-items: center; gap: 4px; }
+  .path-group { min-width: 0; flex: 1; padding: 2px; border: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 5px; background: color-mix(in srgb, CanvasText 2%, transparent); }
+  .toolbar input { min-width: 0; flex: 1; height: 30px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 4px; padding: 6px 9px; color: inherit; background: color-mix(in srgb, CanvasText 4%, transparent); font: 12px ui-monospace, monospace; outline: none; }
+  .toolbar input:focus { border-color: var(--color-primary, #6d5dfc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #6d5dfc) 18%, transparent); }
+  button { border: 0; border-radius: 4px; padding: 8px 11px; color: white; background: #3370ff; font: inherit; font-size: 12px; cursor: pointer; } button:disabled { cursor: default; opacity: .45; }
   .error { margin: 8px 0; padding: 10px; border: 1px solid #d44a4a66; border-radius: 8px; color: #d44a4a; font-size: 12px; }
-  .split { display: grid; min-height: 0; flex: 1; overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 12px; }
-  .splitter { width: 4px; height: 100%; padding: 0; border-radius: 0; background: color-mix(in srgb, CanvasText 13%, transparent); cursor: col-resize; }.splitter:hover { background: #6d5dfc; }
+  .split { display: grid; min-height: 0; flex: 1; overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 6px; box-shadow: 0 1px 3px color-mix(in srgb, CanvasText 7%, transparent); }
+  .splitter { width: 2px; height: 100%; padding: 0; border-radius: 0; background: color-mix(in srgb, CanvasText 11%, transparent); cursor: col-resize; }.splitter:hover { background: var(--color-primary, #6d5dfc); }
   :global(html), :global(body), :global(#app) { height: 100%; overflow: hidden; }
   :global(body) { min-width: 0; color: var(--color-foreground, CanvasText); background: var(--color-background, Canvas); }
-  main { height: 100%; min-height: 0; gap: 8px; padding: 12px 14px; background: var(--color-background, Canvas); }
-  .toolbar { min-height: 32px; padding: 0; }
-  .toolbar input { border-color: var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); }
-  button { border-radius: var(--radius-md, 6px); color: var(--color-primary-foreground, white); background: var(--color-primary, #6d5dfc); }
-  button.secondary { color: var(--color-foreground, CanvasText); border-color: var(--color-border, color-mix(in srgb, CanvasText 16%, transparent)); background: transparent; }
-  .split { border-color: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); border-radius: var(--radius-lg, 8px); background: var(--color-background, Canvas); }
-  .splitter { width: 4px; background: var(--color-border, color-mix(in srgb, CanvasText 13%, transparent)); }
+  main { height: 100%; min-height: 0; gap: 8px; padding: 10px 12px; background: var(--color-background, Canvas); }
+  .toolbar { min-height: 32px; padding: 0; border: 0; background: transparent; }
+  .path-group { border-color: var(--color-border, color-mix(in srgb, CanvasText 10%, transparent)); background: var(--color-background, Canvas); }
+  .toolbar input { border-color: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); background: var(--color-background, Canvas); }
+  button { border-radius: 4px; color: var(--color-primary-foreground, white); background: var(--color-primary, #3370ff); }
+  .split { border-color: var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 6px; background: var(--color-background, Canvas); }
+  .splitter { width: 2px; background: var(--color-border, color-mix(in srgb, CanvasText 11%, transparent)); }
   .splitter:hover { background: var(--color-primary, #6d5dfc); }
+  :global(.dialog-content) { width: min(360px, calc(100% - 32px)); }
+  .dialog-field { display: grid; gap: 6px; color: var(--color-foreground, CanvasText); font-size: 12px; }
+  .dialog-field input { width: 100%; padding: 8px 10px; color: var(--color-foreground, CanvasText); border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); border-radius: var(--radius-md, 6px); outline: none; background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); font: inherit; }
+  .dialog-field input:focus { border-color: var(--color-primary, #6d5dfc); }
+  :global(.dialog-actions) { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .context-menu { position: fixed; z-index: 9999; min-width: 160px; width: max-content; max-width: calc(100vw - 16px); padding: 4px; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-foreground, CanvasText) 10%, transparent); border-radius: 6px; background: var(--color-popover, var(--color-background, Canvas)); color: var(--color-popover-foreground, var(--color-foreground, CanvasText)); box-shadow: 0 12px 32px color-mix(in srgb, CanvasText 18%, transparent); }
+  .context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 24px; padding: 4px 8px; color: inherit; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 13px; line-height: 16px; cursor: default; }
+  .context-menu button:hover, .context-menu button:focus-visible { color: var(--color-accent-foreground, var(--color-foreground, CanvasText)); background: var(--color-accent, var(--color-muted, color-mix(in srgb, CanvasText 7%, transparent))); outline: none; }
+  .context-menu button.danger { color: var(--color-destructive, #dc2626); }
+  .context-menu button.danger:hover, .context-menu button.danger:focus-visible { color: var(--color-destructive, #dc2626); background: color-mix(in srgb, var(--color-destructive, #dc2626) 10%, transparent); }
 </style>
