@@ -61,10 +61,14 @@ The command builds the Go Sidecar, stages `manifest.json`, `assets/`, and the co
 
 ## Release
 
-1. Publish a GitHub Release. The workflow builds unsigned native candidates for DBX's supported targets.
-2. Open a **Plugin submission Issue** in `t8y2/dbx-store` with the source tag and `release-candidates.json` URL.
-3. After review, DBX Store signs the approved candidate with the official repository key and publishes the installable asset.
-4. Open the final catalog PR against **`t8y2/dbx-store:main`** using the signed artifact metadata.
+1. Update the plugin version, commit it, and publish a GitHub Release with a new immutable tag.
+2. The `dbx-store` catalog automation discovers the published release and opens or updates a catalog PR automatically.
+3. After review, a DBX Store maintainer runs the protected signing workflow; it writes the signed catalog data back to that PR.
+4. A maintainer merges the PR after all checks pass.
+
+The plugin repository does not need marketplace automation secrets. A `dbx-store` maintainer registers the public plugin repository in the store automation registry; the store-side GitHub App discovers releases and creates catalog PRs.
+
+An optional `.dbx-store.json` can provide marketplace-only fields such as the icon, tags, license, and localizations for a first submission or an intentional listing update. Existing plugin version updates do not require this file.
 
 Source code and the unsigned candidate stay in this repository. DBX users install the DBX Store-signed asset exposed by the official catalog.
 
