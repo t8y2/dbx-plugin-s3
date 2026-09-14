@@ -55,6 +55,7 @@
   --border: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent));
   --muted: var(--color-muted, color-mix(in srgb, CanvasText 6%, transparent));
   --muted-foreground: var(--color-muted-foreground, color-mix(in srgb, CanvasText 58%, transparent));
+  --color-destructive: #dc2626;
   --destructive: var(--color-destructive, #dc2626);
   --radius: 0.375rem;
   --card: var(--background);

@@ -423,7 +423,6 @@
   .path-group { min-width: 0; flex: 1; padding: 2px; border: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 5px; background: color-mix(in srgb, CanvasText 2%, transparent); }
   .toolbar input { min-width: 0; flex: 1; height: 30px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 4px; padding: 6px 9px; color: inherit; background: color-mix(in srgb, CanvasText 4%, transparent); font: 12px ui-monospace, monospace; outline: none; }
   .toolbar input:focus { border-color: var(--color-primary, #6d5dfc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #6d5dfc) 18%, transparent); }
-  button { border: 0; border-radius: 4px; padding: 8px 11px; color: white; background: #3370ff; font: inherit; font-size: 12px; cursor: pointer; } button:disabled { cursor: default; opacity: .45; }
   .error { margin: 8px 0; padding: 10px; border: 1px solid #d44a4a66; border-radius: 8px; color: #d44a4a; font-size: 12px; }
   .split { display: grid; min-height: 0; flex: 1; overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 6px; box-shadow: 0 1px 3px color-mix(in srgb, CanvasText 7%, transparent); }
   .splitter { width: 2px; height: 100%; padding: 0; border-radius: 0; background: color-mix(in srgb, CanvasText 11%, transparent); cursor: col-resize; }.splitter:hover { background: var(--color-primary, #6d5dfc); }
@@ -433,7 +432,6 @@
   .toolbar { min-height: 32px; padding: 0; border: 0; background: transparent; }
   .path-group { border-color: var(--color-border, color-mix(in srgb, CanvasText 10%, transparent)); background: var(--color-background, Canvas); }
   .toolbar input { border-color: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); background: var(--color-background, Canvas); }
-  button { border-radius: 4px; color: var(--color-primary-foreground, white); background: var(--color-primary, #3370ff); }
   .split { border-color: var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 6px; background: var(--color-background, Canvas); }
   .splitter { width: 2px; background: var(--color-border, color-mix(in srgb, CanvasText 11%, transparent)); }
   .splitter:hover { background: var(--color-primary, #6d5dfc); }
