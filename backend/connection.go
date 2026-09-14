@@ -39,7 +39,10 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	}
 	secrets, _ := connection["connection_secrets"].(map[string]any)
 	result.secretKey = stringValue(secrets["secret_key"])
-	result.sessionToken = stringValue(secrets["session_token"])
+	result.sessionToken = strings.TrimSpace(stringValue(secrets["session_token"]))
+	if result.sessionToken == "null" {
+		result.sessionToken = ""
+	}
 	config, _ := connection["external_config"].(map[string]any)
 	result.endpoint = stringValue(config["endpoint"])
 	result.region = strings.TrimSpace(stringValue(config["region"]))

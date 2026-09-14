@@ -116,6 +116,7 @@
           "label": "Session token",
           "type": "password",
           "binding": "secret",
+          "default": "",
           "required": false,
           "description": "Optional temporary credential token for STS or IAM roles."
         }

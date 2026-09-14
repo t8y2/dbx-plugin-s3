@@ -22,6 +22,8 @@ For UFile S3-compatible storage, configure the endpoint protocol as `https`, end
 
 Keep access keys and secret keys in DBX's connection secret storage. Do not put them in this repository, manifests, issue descriptions, logs, or test fixtures.
 
+Leave the session token empty when using long-lived credentials. Its explicit empty-string default prevents DBX hosts that serialize missing field defaults as `null` from saving a literal `"null"` token. The backend also treats existing `"null"` tokens as absent, so affected saved connections can reconnect without manually clearing the field. Real STS tokens are still sent after trimming surrounding whitespace.
+
 ## Develop
 
 Edit `src/App.svelte`, then build the Svelte workbench. The browser development host is available from the current DBX plugin SDK checkout:
