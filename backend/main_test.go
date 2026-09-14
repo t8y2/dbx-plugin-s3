@@ -130,6 +130,27 @@ func TestParseConnectionRejectsInvalidBasePath(t *testing.T) {
 	}
 }
 
+func TestParseConnectionDefaultsRegionAndRootBasePath(t *testing.T) {
+	connection, pluginError := parseConnection(map[string]any{
+		"connection": map[string]any{
+			"id":       "connection-1",
+			"database": "example-bucket",
+			"username": "access-key",
+			"external_config": map[string]any{
+				"endpoint":  "http://localhost:9000",
+				"base_path": "/",
+			},
+			"connection_secrets": map[string]any{"secret_key": "secret-key"},
+		},
+	})
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if connection.region != "us-east-1" || connection.basePath != "" {
+		t.Fatalf("unexpected region/base path defaults: %#v", connection)
+	}
+}
+
 func TestProviderGuardsRejectMismatchedProvider(t *testing.T) {
 	if pluginError := requireConnectionProvider(map[string]any{
 		"provider": map[string]any{"id": "other.connection", "databaseType": "s3"},

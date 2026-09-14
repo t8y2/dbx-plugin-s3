@@ -8,7 +8,8 @@ The Go Sidecar owns S3 connection lifecycle, credentials, and object operations;
 
 - AWS S3 and S3-compatible endpoints such as MinIO, R2, and Ceph.
 - Automatic, path-style, and virtual-hosted bucket addressing.
-- Separate endpoint protocol and host fields, plus an optional base path for providers such as UFile.
+- Separate endpoint protocol and host fields, plus a base path (defaults to `/`, the whole bucket) for providers such as UFile.
+- Optional region: empty falls back to `us-east-1`, and MinIO accepts any region.
 - Long-lived access keys plus optional STS session tokens.
 - Root and nested object listing with cursor pagination, image/video/audio/Markdown/Word previews, writes, directory markers, recursive deletes, and rename.
 - Optimistic write protection with ETags and a 4 MiB inline payload limit enforced by the DBX filesystem contract.

@@ -172,7 +172,10 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	result.sessionToken = stringValue(secrets["session_token"])
 	config, _ := connection["external_config"].(map[string]any)
 	result.endpoint = stringValue(config["endpoint"])
-	result.region = stringValue(config["region"])
+	result.region = strings.TrimSpace(stringValue(config["region"]))
+	if result.region == "" {
+		result.region = "us-east-1"
+	}
 	endpointProtocol := stringValue(config["endpoint_protocol"])
 	if endpointProtocol != "" && endpointProtocol != "http" && endpointProtocol != "https" {
 		return connectionConfig{}, invalidParams("S3 endpoint protocol must be http or https")
@@ -208,7 +211,7 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 
 	for field, value := range map[string]string{
 		"id": result.id, "bucket": result.bucket, "access key": result.accessKey,
-		"secret key": result.secretKey, "endpoint": result.endpoint, "region": result.region,
+		"secret key": result.secretKey, "endpoint": result.endpoint,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return connectionConfig{}, invalidParams("Missing S3 connection field: " + field)

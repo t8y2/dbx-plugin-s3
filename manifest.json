@@ -64,15 +64,17 @@
           "type": "text",
           "default": "us-east-1",
           "binding": "config",
-          "required": true
+          "required": false,
+          "description": "Optional for MinIO and most S3-compatible services; empty falls back to us-east-1."
         },
         {
           "key": "base_path",
           "label": "Base path",
           "type": "text",
+          "default": "/",
           "binding": "config",
           "required": false,
-          "description": "Optional object prefix mapped to the DBX filesystem root, for example /project/assets."
+          "description": "Object prefix mapped to the DBX filesystem root; / uses the whole bucket, for example /project/assets."
         },
         {
           "key": "addressing_style",
@@ -140,8 +142,8 @@
             "display_name": { "label": "连接名称" },
             "endpoint_protocol": { "label": "端点协议", "options": { "https": "HTTPS", "http": "HTTP" } },
             "endpoint": { "label": "端点主机", "description": "只填写主机名，不要填写路径。" },
-            "region": { "label": "区域" },
-            "base_path": { "label": "基础路径", "description": "可选的对象前缀，例如 /project/assets。" },
+            "region": { "label": "区域", "description": "MinIO 等 S3 兼容服务可不填，留空时默认 us-east-1。" },
+            "base_path": { "label": "基础路径", "description": "映射为文件系统根的对象前缀；/ 表示整个存储桶，例如 /project/assets。" },
             "addressing_style": { "label": "寻址方式" },
             "bucket": { "label": "存储桶" },
             "access_key": { "label": "访问密钥" },
