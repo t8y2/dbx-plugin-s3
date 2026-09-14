@@ -3,18 +3,19 @@
   "manifest_version": 1,
   "id": "io.github.t8y2.s3",
   "name": "S3 Browser",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "t8y2",
   "description": "S3-compatible object storage plugin for DBX.",
   "icon": "assets/plugin.svg",
-  "permissions": ["host.events"],
+  "permissions": ["host.events", "host.binary"],
   "engines": {
     "dbx": ">=0.5.68",
     "host_api": "1"
   },
   "entrypoints": {
     "backend": {
-      "executable": "bin/dbx-plugin-s3"
+      "executable": "bin/dbx-plugin-s3",
+      "transport": "stdio-framed"
     },
     "ui": {
       "root": "ui",
@@ -95,7 +96,8 @@
           "label": "Bucket",
           "type": "text",
           "binding": "database",
-          "required": true
+          "required": false,
+          "description": "Optional. Leave empty to list all buckets after connecting."
         },
         {
           "key": "access_key",
@@ -147,7 +149,7 @@
             "region": { "label": "区域", "description": "MinIO 等 S3 兼容服务可不填，留空时默认 us-east-1。" },
             "base_path": { "label": "基础路径", "description": "映射为文件系统根的对象前缀；/ 表示整个存储桶，例如 /project/assets。" },
             "addressing_style": { "label": "寻址方式" },
-            "bucket": { "label": "存储桶" },
+            "bucket": { "label": "存储桶", "description": "可选。留空后连接即可列出所有存储桶。" },
             "access_key": { "label": "访问密钥" },
             "secret_key": { "label": "秘密密钥" },
             "session_token": { "label": "会话令牌", "description": "STS 或临时 IAM 凭据的可选令牌。" }

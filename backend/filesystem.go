@@ -34,6 +34,9 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 	if pluginError != nil {
 		return nil, pluginError
 	}
+	if connection.bucket == "" && path.bucket == "" {
+		return plugin.listBuckets(context, connection, values)
+	}
 	prefix := path.key
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -81,6 +84,44 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 	result := map[string]any{"entries": entries}
 	if len(listedObjects) > limit {
 		result["nextCursor"] = encodeCursor(listedObjects[limit-1].Key)
+	}
+	return result, nil
+}
+
+func (plugin *plugin) listBuckets(context context.Context, connection *s3Connection, values map[string]any) (any, *dbxpluginsdk.PluginError) {
+	limit := int(numberValue(values["limit"]))
+	if limit <= 0 || limit > maxPageSize {
+		limit = defaultPageSize
+	}
+	cursor := decodeCursor(stringValue(values["cursor"]))
+	buckets, err := connection.client.ListBuckets(context)
+	if err != nil {
+		return nil, remoteError("S3 bucket listing failed: " + err.Error())
+	}
+	sort.Slice(buckets, func(left, right int) bool { return buckets[left].Name < buckets[right].Name })
+	entries := make([]filesystemEntry, 0, minInt(limit, len(buckets)))
+	for _, bucket := range buckets {
+		if bucket.Name <= cursor || !validEntryName(bucket.Name) {
+			continue
+		}
+		entries = append(entries, filesystemEntry{
+			Name:       bucket.Name,
+			URI:        objectURI(bucket.Name, ""),
+			Kind:       "bucket",
+			ModifiedAt: bucket.CreationDate.UTC().Format(time.RFC3339),
+		})
+		if len(entries) == limit {
+			break
+		}
+	}
+	result := map[string]any{"entries": entries, "bucketMode": true}
+	if len(entries) == limit {
+		for _, bucket := range buckets {
+			if bucket.Name > entries[len(entries)-1].Name {
+				result["nextCursor"] = encodeCursor(entries[len(entries)-1].Name)
+				break
+			}
+		}
 	}
 	return result, nil
 }

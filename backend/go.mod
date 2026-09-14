@@ -2,7 +2,7 @@ module github.com/t8y2/dbx-plugin-s3
 
 go 1.22
 
-require github.com/t8y2/dbx/plugins/sdk/go/dbx-plugin-sdk v0.0.0-20260911153444-9d81c759d199
+require github.com/t8y2/dbx/plugins/sdk/go/dbx-plugin-sdk v0.0.0-20260914141120-b288a6b5f423
 
 require github.com/minio/minio-go/v7 v7.0.80
 

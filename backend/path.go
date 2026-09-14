@@ -24,7 +24,7 @@ func parseObjectPath(rawURI string, connection *s3Connection) (objectPath, *dbxp
 	if bucket == "" {
 		bucket = connection.bucket
 	}
-	if bucket != connection.bucket {
+	if connection.bucket != "" && bucket != connection.bucket {
 		return objectPath{}, invalidParams("S3 URI bucket does not match the connected bucket")
 	}
 	key := strings.TrimPrefix(parsed.Path, "/")

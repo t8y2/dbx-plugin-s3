@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 
@@ -83,7 +84,7 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	}
 
 	for field, value := range map[string]string{
-		"id": result.id, "bucket": result.bucket, "access key": result.accessKey,
+		"id": result.id, "access key": result.accessKey,
 		"secret key": result.secretKey, "endpoint": result.endpoint,
 	} {
 		if strings.TrimSpace(value) == "" {
@@ -152,6 +153,12 @@ func verifyConnection(config connectionConfig) *dbxpluginsdk.PluginError {
 func verifyBucket(connection *s3Connection) *dbxpluginsdk.PluginError {
 	context, cancel := operationContext()
 	defer cancel()
+	if connection.bucket == "" {
+		if _, err := connection.client.ListBuckets(context); err != nil {
+			return remoteError("S3 bucket listing failed: " + err.Error())
+		}
+		return nil
+	}
 	exists, err := connection.client.BucketExists(context, connection.bucket)
 	if err != nil {
 		if listErr := verifyBucketByListing(context, connection); listErr == nil {
@@ -200,16 +207,28 @@ func (plugin *plugin) disconnect(connectionID string) (any, *dbxpluginsdk.Plugin
 	plugin.mutex.Lock()
 	delete(plugin.connections, connectionID)
 	streams := make([]*s3Stream, 0)
+	uploads := make([]*s3Upload, 0)
 	for streamID, stream := range plugin.streams {
 		if stream.connectionID == connectionID {
 			delete(plugin.streams, streamID)
 			streams = append(streams, stream)
 		}
 	}
+	for uploadID, upload := range plugin.uploads {
+		if upload.connectionID == connectionID {
+			delete(plugin.uploads, uploadID)
+			uploads = append(uploads, upload)
+		}
+	}
 	plugin.mutex.Unlock()
 	for _, stream := range streams {
 		stream.cancel()
 		_ = stream.object.Close()
+	}
+	for _, upload := range uploads {
+		_ = upload.writer.CloseWithError(errors.New("S3 connection disconnected"))
+		upload.cancel()
+		<-upload.done
 	}
 	return map[string]any{"success": true}, nil
 }

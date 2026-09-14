@@ -1,9 +1,9 @@
 <script>
   import { marked } from "marked";
-  import { Pencil, Trash2 } from "@lucide/svelte";
+  import { Download, Pencil, Trash2 } from "@lucide/svelte";
   import { Button } from "../lib/components/ui/button/index.js";
 
-  let { selected = null, preview, text, onSheetChange, onRename, onDelete } = $props();
+  let { selected = null, preview, text, onSheetChange, onRename, onDelete, onDownload } = $props();
   const allowedMarkdownTags = new Set(["A", "BLOCKQUOTE", "BR", "CODE", "EM", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "OL", "P", "PRE", "STRONG", "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL"]);
   const displayCell = (value) => value === null || value === undefined ? "" : String(value);
 
@@ -29,8 +29,9 @@
     <div class="preview-title">
       <div class="preview-heading"><strong>{selected.name}</strong><small>{preview.type}{preview.truncated ? ` · ${text.truncated}` : ""}</small></div>
       <div class="preview-actions">
-        <Button variant="ghost" size="sm" class="preview-action" onclick={() => onRename?.(selected)}><Pencil size={13} />{text.rename}</Button>
-        <Button variant="destructive" size="sm" class="preview-action" onclick={() => onDelete?.(selected)}><Trash2 size={13} />{text.delete}</Button>
+        {#if selected.kind !== "directory" && selected.kind !== "bucket"}<Button variant="ghost" size="sm" class="preview-action" onclick={() => onDownload?.(selected)}><Download size={13} />{text.download}</Button>{/if}
+        {#if selected.kind !== "bucket"}<Button variant="ghost" size="sm" class="preview-action" onclick={() => onRename?.(selected)}><Pencil size={13} />{text.rename}</Button>{/if}
+        {#if selected.kind !== "bucket"}<Button variant="destructive" size="sm" class="preview-action" onclick={() => onDelete?.(selected)}><Trash2 size={13} />{text.delete}</Button>{/if}
       </div>
     </div>
     <div class="preview-content">

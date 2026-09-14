@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID           = "io.github.t8y2.s3"
-	pluginVersion      = "0.1.6"
+	pluginVersion      = "0.1.7"
 	filesystemProvider = "io.github.t8y2.s3.files"
 	maxInlineBytes     = 4 * 1024 * 1024
 	streamChunkBytes   = 256 * 1024
@@ -19,12 +19,14 @@ const (
 	defaultPageSize    = 200
 	maxPageSize        = 1000
 	operationTimeout   = 30 * time.Second
+	uploadTimeout      = 30 * time.Minute
 )
 
 type plugin struct {
 	mutex       sync.RWMutex
 	connections map[string]*s3Connection
 	streams     map[string]*s3Stream
+	uploads     map[string]*s3Upload
 }
 
 func (plugin *plugin) Handle(
@@ -99,6 +101,21 @@ func (plugin *plugin) Handle(
 			return nil, pluginError
 		}
 		return plugin.closeStream(values)
+	case "filesystem/upload/open":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.openUpload(values)
+	case "filesystem/upload/finish":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.finishUpload(values)
+	case "filesystem/upload/abort":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.abortUpload(values)
 	case "filesystem/write":
 		if pluginError := requireFilesystemProvider(values); pluginError != nil {
 			return nil, pluginError
@@ -128,7 +145,8 @@ func (plugin *plugin) Handle(
 
 func main() {
 	metadata := dbxpluginsdk.Metadata{ID: pluginID, Version: pluginVersion, Capabilities: []string{"connections", "filesystem"}}
-	server := dbxpluginsdk.NewServer(metadata, &plugin{connections: map[string]*s3Connection{}, streams: map[string]*s3Stream{}})
+	server := dbxpluginsdk.NewServer(metadata, &plugin{connections: map[string]*s3Connection{}, streams: map[string]*s3Stream{}, uploads: map[string]*s3Upload{}}).
+		WithTransport(dbxpluginsdk.TransportFramed)
 	if err := server.Serve(); err != nil {
 		log.Fatal("DBX S3 Sidecar stopped:", err)
 	}

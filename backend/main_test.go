@@ -32,6 +32,26 @@ func TestParseConnectionUsesDBXConnectionFields(t *testing.T) {
 	}
 }
 
+func TestParseConnectionAllowsEmptyBucketForBucketDiscovery(t *testing.T) {
+	connection, pluginError := parseConnection(map[string]any{
+		"connection": map[string]any{
+			"id":       "connection-1",
+			"database": "",
+			"username": "access-key",
+			"external_config": map[string]any{
+				"endpoint": "https://s3.example.com",
+			},
+			"connection_secrets": map[string]any{"secret_key": "secret-key"},
+		},
+	})
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if connection.bucket != "" {
+		t.Fatalf("expected empty bucket, got %q", connection.bucket)
+	}
+}
+
 func TestValidStreamID(t *testing.T) {
 	for _, id := range []string{"stream-1", "preview_2", "a.b"} {
 		if !validStreamID(id) {
@@ -245,6 +265,16 @@ func TestParseObjectPathEnforcesConnectedBucket(t *testing.T) {
 	_, pluginError = parseObjectPath("s3://other-bucket/file.txt", connection)
 	if pluginError == nil {
 		t.Fatal("expected cross-bucket URI to be rejected")
+	}
+}
+
+func TestParseObjectPathAcceptsSelectedBucketWhenConnectionHasNoBucket(t *testing.T) {
+	path, pluginError := parseObjectPath("s3://selected-bucket/folder/file.txt", &s3Connection{})
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if path.bucket != "selected-bucket" || path.key != "folder/file.txt" {
+		t.Fatalf("unexpected selected bucket path: %#v", path)
 	}
 }
 

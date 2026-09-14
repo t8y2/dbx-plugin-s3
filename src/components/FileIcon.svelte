@@ -15,7 +15,7 @@
     file: '<path d="M6 3h6l4 4v10H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M12 3v5h5"/>',
   };
   function entryKind(value) {
-    if (value.kind === "directory") return "folder";
+    if (value.kind === "directory" || value.kind === "bucket") return "folder";
     const type = (value.contentType || "").split(";", 1)[0].toLowerCase();
     const ext = extension(value.name);
     if (type.startsWith("image/") || ["avif", "bmp", "gif", "jpeg", "jpg", "png", "webp"].includes(ext)) return "image";

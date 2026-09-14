@@ -4,7 +4,7 @@
   import PreviewPane from "./components/PreviewPane.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { ArrowUp, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { ArrowUp, Download, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
@@ -13,15 +13,15 @@
   const copy = {
     en: {
       title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
-      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.",
+      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
-      markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", rename: "Rename", delete: "Delete", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
+      markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
-      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。",
+      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
-      markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", rename: "重命名", delete: "删除", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
+      markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
     },
   };
 
@@ -30,6 +30,7 @@
   let entries = $state([]);
   let currentUri = $state("s3:/");
   let nextCursor = $state("");
+  let bucketMode = $state(false);
   let selected = $state(null);
   let preview = $state({ kind: "empty", value: "", type: "", truncated: false });
   let loading = $state(false);
@@ -126,6 +127,7 @@
       }
       currentUri = uri;
       nextCursor = result?.nextCursor || "";
+      if (!append) bucketMode = !!result?.bucketMode;
       if (!append) clearPreview();
     } catch (cause) {
       error = cause?.message || String(cause);
@@ -141,7 +143,7 @@
     await previewReader?.cancel();
     previewReader = undefined;
     selected = entry;
-    if (entry.kind === "directory") {
+    if (entry.kind === "directory" || entry.kind === "bucket") {
       preview = { kind: "empty", value: "", type: text.folder, truncated: false };
       return;
     }
@@ -198,12 +200,12 @@
 
   function openEntry(entry) {
     contextMenu = null;
-    if (entry.kind === "directory") void load(entry.uri);
+    if (entry.kind === "directory" || entry.kind === "bucket") void load(entry.uri);
   }
 
   function openContextMenu(event, entry) {
     const menuWidth = 150;
-    const menuHeight = entry.kind === "directory" ? 116 : 80;
+    const menuHeight = entry.kind === "bucket" ? 40 : entry.kind === "directory" ? 80 : 116;
     contextMenu = {
       entry,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -252,7 +254,21 @@
     if (!files.length) return;
     await runOperation(async () => {
       for (const file of files) {
-        if (file.size > 4 * 1024 * 1024) throw new Error(text.uploadLimit);
+        if (file.size > 4 * 1024 * 1024) {
+          if (typeof window.dbxPlugin?.sendBinary !== "function") throw new Error(text.uploadLargeUnavailable);
+          const uploadId = globalThis.crypto?.randomUUID?.() || `upload-${Date.now()}`;
+          const opened = await invoke("filesystem/upload/open", { uploadId, uri: childUri(currentUri, file.name), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
+          try {
+            for (let offset = 0; offset < file.size; offset += 1024 * 1024) {
+              await window.dbxPlugin.sendBinary(opened.channel, await file.slice(offset, offset + 1024 * 1024).arrayBuffer());
+            }
+            await invoke("filesystem/upload/finish", { uploadId }, { timeoutMs: 120000 });
+          } catch (cause) {
+            await invoke("filesystem/upload/abort", { uploadId }, { timeoutMs: 120000 }).catch(() => undefined);
+            throw cause;
+          }
+          continue;
+        }
         const bytes = new Uint8Array(await file.arrayBuffer());
         await invoke("filesystem/write", { uri: childUri(currentUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
       }
@@ -330,8 +346,43 @@
 
   function parentUri() {
     const value = currentUri.replace(/\/$/, "");
+    if (value.startsWith("s3://") && !value.slice(5).includes("/")) return "s3:/";
     const slash = value.lastIndexOf("/");
     return slash <= value.indexOf(":") ? "" : `${value.slice(0, slash)}/`;
+  }
+
+  async function downloadEntry(entry) {
+    contextMenu = null;
+    if (entry.kind === "directory" || entry.kind === "bucket") return;
+    operating = true;
+    error = "";
+    try {
+      if (typeof window.dbxPlugin?.stream !== "function") throw new Error(text.downloadUnavailable);
+      const opened = await window.dbxPlugin.stream("filesystem/stream/open", { uri: entry.uri, maxBytes: 256 * 1024 * 1024, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
+      const reader = opened.stream.getReader();
+      const chunks = [];
+      try {
+        while (true) {
+          const result = await reader.read();
+          if (result.done) break;
+          chunks.push(result.value);
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      if (opened.metadata?.truncated) throw new Error(text.downloadTooLarge);
+      const blob = new Blob(chunks, { type: normalizedType(entry, opened.metadata) });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = entry.name;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (cause) {
+      error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
+    } finally {
+      operating = false;
+    }
   }
 
   function startResize(event) {
@@ -365,7 +416,7 @@
   onDestroy(releasePreviewUrl);
 </script>
 
-<svelte:window onclick={closeContextMenu} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />
+<svelte:window onclick={closeContextMenu} oncontextmenu={(event) => event.preventDefault()} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />
 
 <svelte:head><title>S3</title></svelte:head>
 
@@ -377,8 +428,8 @@
     </div>
     <div class="toolbar-actions">
       <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
-      <Button variant="outline" size="sm" disabled={loading || operating} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
-      <Button size="sm" disabled={loading || operating} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
+      <Button variant="outline" size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
+      <Button size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
     </div>
     <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
   </div>
@@ -386,13 +437,14 @@
   <section class="split" style={`grid-template-columns: minmax(240px, ${leftWidth}%) 2px minmax(280px, 1fr)`}>
     <ObjectList {entries} {selected} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onSheetChange={(value) => (preview = value)} />
+    <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
-      {#if contextMenu.entry.kind === "directory"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button>{/if}
-      <button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>
-      <button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>
+      {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button>{/if}
+      {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button>{/if}
+      {#if contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
+      {#if contextMenu.entry.kind !== "bucket"}<button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>{/if}
     </div>
   {/if}
   <Dialog.Root bind:open={dialogOpen} onOpenChange={handleDialogOpenChange}>

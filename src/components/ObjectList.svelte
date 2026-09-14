@@ -38,7 +38,7 @@
   });
 </script>
 
-<div class="list-panel">
+<div class="list-panel" role="group" oncontextmenu={(event) => event.preventDefault()}>
   {#if loading && !entries.length}<div class="empty loading-state"><span class="spinner" aria-hidden="true"></span>{text.loading}</div>
   {:else if !entries.length}<div class="empty">{text.empty}</div>
   {:else}
@@ -47,7 +47,7 @@
       {#each entries as entry (entry.uri)}
         <button class:selected={selected?.uri === entry.uri} class="entry" onclick={() => onSelect?.(entry)} ondblclick={() => onOpen?.(entry)} oncontextmenu={(event) => handleContextMenu(event, entry)}>
           <span class="entry-name"><FileIcon {entry} />{entry.name}</span>
-          <span class="entry-meta">{entry.kind === "directory" ? text.folder : entry.contentType || ""}</span>
+          <span class="entry-meta">{entry.kind === "directory" || entry.kind === "bucket" ? text.folder : entry.contentType || ""}</span>
         </button>
       {/each}
       {#if nextCursor}<div bind:this={loadMoreSentinel} class:loading={loading} class="load-more-status" role="status" aria-live="polite">{#if loading}<span class="spinner" aria-hidden="true"></span>{text.loading}{/if}</div>{/if}
