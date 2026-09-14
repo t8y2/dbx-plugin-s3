@@ -21,7 +21,7 @@ import (
 
 const (
 	pluginID           = "io.github.t8y2.s3"
-	pluginVersion      = "0.1.3"
+	pluginVersion      = "0.1.5"
 	filesystemProvider = "io.github.t8y2.s3.files"
 	maxInlineBytes     = 4 * 1024 * 1024
 	defaultPageSize    = 200
