@@ -7,6 +7,7 @@
   "publisher": "t8y2",
   "description": "S3-compatible object storage plugin for DBX.",
   "icon": "assets/plugin.svg",
+  "permissions": ["host.events"],
   "engines": {
     "dbx": ">=0.5.68",
     "host_api": "1"

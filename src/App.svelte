@@ -1,7 +1,5 @@
 <script>
-  import { onMount } from "svelte";
-  import mammoth from "mammoth";
-  import * as XLSX from "xlsx";
+  import { onDestroy, onMount } from "svelte";
   import ObjectList from "./components/ObjectList.svelte";
   import PreviewPane from "./components/PreviewPane.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
@@ -9,16 +7,19 @@
   import { ArrowUp, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
+  const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
+  const archiveExtensions = new Set(["7z", "bz2", "gz", "rar", "tar", "tgz", "zip"]);
+  const textExtensions = new Set(["c", "conf", "cpp", "css", "go", "h", "html", "ini", "java", "js", "json", "jsx", "log", "py", "rs", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "xml", "yaml", "yml"]);
   const copy = {
     en: {
       title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
-      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.",
+      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", rename: "Rename", delete: "Delete", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
-      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。",
+      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", rename: "重命名", delete: "删除", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
     },
@@ -39,6 +40,10 @@
   let dialog = $state(null);
   let dialogOpen = $state(false);
   let contextMenu = $state(null);
+  let previewRequest = 0;
+  let previewReader;
+  let mammothPromise;
+  let xlsxPromise;
 
   const connectionId = () => context?.connectionId || "";
   const isZh = () => (window.dbxPlugin?.locale || "en").toLowerCase().startsWith("zh");
@@ -55,9 +60,55 @@
     const declared = (result?.contentType || entry?.contentType || "application/octet-stream").split(";", 1)[0].toLowerCase();
     return declared === "application/octet-stream" ? (mimeByExtension[extension(entry?.name || "")] || declared) : declared;
   };
+  const previewKind = (entry, type = normalizedType(entry)) => {
+    const ext = extension(entry?.name || "");
+    if (archiveExtensions.has(ext) || type === "application/pdf") return "binary";
+    if (type.startsWith("image/") || ["avif", "bmp", "gif", "jpeg", "jpg", "png", "webp"].includes(ext)) return "image";
+    if (type.startsWith("video/") || ["m4v", "mov", "mp4", "mpeg", "webm"].includes(ext)) return "video";
+    if (type.startsWith("audio/") || ["aac", "flac", "m4a", "mp3", "ogg", "wav", "weba"].includes(ext)) return "audio";
+    if (ext === "docx" || type.includes("wordprocessingml.document")) return "word";
+    if (["csv", "xls", "xlsb", "xlsm", "xlsx"].includes(ext) || type === "text/csv" || type.includes("spreadsheet") || type.includes("excel")) return "spreadsheet";
+    if (["md", "markdown"].includes(ext)) return "markdown";
+    if (type.startsWith("text/") || ["application/json", "application/javascript", "application/xml"].includes(type) || textExtensions.has(ext)) return "text";
+    return "binary";
+  };
+  const loadMammoth = () => mammothPromise ||= import("mammoth").then(({ default: module }) => module);
+  const loadXlsx = () => xlsxPromise ||= import("xlsx");
 
   async function invoke(method, params, options = {}) {
     return window.dbxPlugin.invoke(method, { ...params, connectionId: connectionId(), providerId }, options);
+  }
+
+  async function readStream(reader) {
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        chunks.push(result.value);
+        total += result.value.byteLength;
+      }
+    } finally {
+      if (previewReader === reader) previewReader = undefined;
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  }
+
+  async function readPreview(uri, maxBytes) {
+    if (typeof window.dbxPlugin?.stream !== "function") {
+      const result = await invoke("filesystem/read", { uri, maxBytes }, { timeoutMs: 120000 });
+      return { bytes: decode(result.dataBase64), metadata: result };
+    }
+    const opened = await window.dbxPlugin.stream("filesystem/stream/open", { uri, maxBytes, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
+    previewReader = opened.stream.getReader();
+    return { bytes: await readStream(previewReader), metadata: opened.metadata || {} };
   }
 
   async function load(uri = currentUri, append = false) {
@@ -67,7 +118,12 @@
     try {
       const result = await invoke("filesystem/list", { uri, cursor: append ? nextCursor : undefined, limit: 200 });
       const incoming = result?.entries || [];
-      entries = append ? [...entries, ...incoming.filter((candidate) => !entries.some((entry) => entry.uri === candidate.uri))] : incoming;
+      if (append) {
+        const existingUris = new Set(entries.map((entry) => entry.uri));
+        entries = [...entries, ...incoming.filter((candidate) => !existingUris.has(candidate.uri))];
+      } else {
+        entries = incoming;
+      }
       currentUri = uri;
       nextCursor = result?.nextCursor || "";
       if (!append) clearPreview();
@@ -80,35 +136,48 @@
 
   async function selectEntry(entry) {
     contextMenu = null;
+    const requestId = ++previewRequest;
+    releasePreviewUrl();
+    await previewReader?.cancel();
+    previewReader = undefined;
     selected = entry;
     if (entry.kind === "directory") {
       preview = { kind: "empty", value: "", type: text.folder, truncated: false };
       return;
     }
+    const type = normalizedType(entry);
+    const kind = previewKind(entry, type);
+    if (kind === "binary") {
+      preview = { kind, value: "", type, truncated: false };
+      return;
+    }
+    const maxBytes = previewLimits[kind];
+    if (Number.isFinite(entry.size) && entry.size > maxBytes) {
+      preview = { kind: "binary", value: "", type, truncated: true, message: text.previewTooLarge };
+      return;
+    }
     preview = { kind: "loading", value: "", type: "", truncated: false };
     try {
-      const result = await invoke("filesystem/read", { uri: entry.uri, maxBytes: 32 * 1024 * 1024 }, { timeoutMs: 120000 });
-      const type = normalizedType(entry, result);
-      const bytes = decode(result.dataBase64);
-      const ext = extension(entry.name);
-      const isImage = type.startsWith("image/") || ["avif", "bmp", "gif", "jpeg", "jpg", "png", "webp"].includes(ext);
-      const isVideo = type.startsWith("video/") || ["m4v", "mov", "mp4", "mpeg", "webm"].includes(ext);
-      const isAudio = type.startsWith("audio/") || ["aac", "flac", "m4a", "mp3", "ogg", "wav", "weba"].includes(ext);
-      const isWord = ext === "docx" || type.includes("wordprocessingml.document");
-      const isSpreadsheet = ["csv", "xls", "xlsb", "xlsm", "xlsx"].includes(ext) || type === "text/csv" || type.includes("spreadsheet") || type.includes("excel");
-      const isMarkdown = ["md", "markdown"].includes(ext);
-      if (result.truncated && (isImage || isVideo || isAudio || isWord || isSpreadsheet)) {
-        preview = { kind: "binary", value: "", type, truncated: true };
-      } else if (isImage || type.startsWith("image/")) {
-        preview = { kind: "image", value: URL.createObjectURL(new Blob([bytes], { type })), type, truncated: !!result.truncated };
-      } else if (isVideo || type.startsWith("video/")) {
-        preview = { kind: "video", value: URL.createObjectURL(new Blob([bytes], { type })), type, truncated: !!result.truncated };
-      } else if (isAudio || type.startsWith("audio/")) {
-        preview = { kind: "audio", value: URL.createObjectURL(new Blob([bytes], { type })), type, truncated: !!result.truncated };
-      } else if (isWord) {
+      const loaded = await readPreview(entry.uri, maxBytes);
+      const bytes = loaded.bytes;
+      if (requestId !== previewRequest) return;
+      const result = loaded.metadata;
+      const resultType = normalizedType(entry, result);
+      if (result.truncated && ["image", "video", "audio", "word", "spreadsheet"].includes(kind)) {
+        preview = { kind: "binary", value: "", type: resultType, truncated: true };
+      } else if (kind === "image") {
+        preview = { kind, value: URL.createObjectURL(new Blob([bytes], { type: resultType })), type: resultType, truncated: !!result.truncated };
+      } else if (kind === "video") {
+        preview = { kind, value: URL.createObjectURL(new Blob([bytes], { type: resultType })), type: resultType, truncated: !!result.truncated };
+      } else if (kind === "audio") {
+        preview = { kind, value: URL.createObjectURL(new Blob([bytes], { type: resultType })), type: resultType, truncated: !!result.truncated };
+      } else if (kind === "word") {
+        const mammoth = await loadMammoth();
         const word = await mammoth.extractRawText({ arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+        if (requestId !== previewRequest) return;
         preview = { kind: "text", value: word.value, type: text.word, truncated: !!result.truncated };
-      } else if (isSpreadsheet) {
+      } else if (kind === "spreadsheet") {
+        const XLSX = await loadXlsx();
         const workbook = XLSX.read(bytes, { type: "array", cellDates: true });
         const sheets = workbook.SheetNames.map((name) => {
           const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: "", raw: false });
@@ -116,13 +185,14 @@
           const columnCount = visibleRows.reduce((count, row) => Math.max(count, row.length), 0);
           return { name, rows: visibleRows, truncated: rows.length > 500 || rows.some((row) => row.length > 50), columnCount };
         });
+        if (requestId !== previewRequest) return;
         preview = { kind: "spreadsheet", value: "", type: text.spreadsheet, sheets, sheetIndex: 0, truncated: !!result.truncated || sheets.some((sheet) => sheet.truncated) };
-      } else {
+      } else if (kind === "markdown" || kind === "text") {
         const value = new TextDecoder().decode(bytes);
-        preview = { kind: isMarkdown ? "markdown" : "text", value, type: isMarkdown ? text.markdown : type, truncated: !!result.truncated };
+        preview = { kind, value, type: kind === "markdown" ? text.markdown : resultType, truncated: !!result.truncated };
       }
     } catch (cause) {
-      preview = { kind: "error", value: cause?.message || String(cause), type: "", truncated: false };
+      if (requestId === previewRequest) preview = { kind: "error", value: cause?.message || String(cause), type: "", truncated: false };
     }
   }
 
@@ -246,9 +316,16 @@
   }
 
   function clearPreview() {
-    if (["image", "video", "audio"].includes(preview.kind) && preview.value) URL.revokeObjectURL(preview.value);
+    previewRequest += 1;
+    releasePreviewUrl();
+    void previewReader?.cancel();
+    previewReader = undefined;
     selected = null;
     preview = { kind: "empty", value: "", type: "", truncated: false };
+  }
+
+  function releasePreviewUrl() {
+    if (["image", "video", "audio"].includes(preview.kind) && preview.value) URL.revokeObjectURL(preview.value);
   }
 
   function parentUri() {
@@ -284,6 +361,8 @@
     });
     return unsubscribe;
   });
+
+  onDestroy(releasePreviewUrl);
 </script>
 
 <svelte:window onclick={closeContextMenu} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />

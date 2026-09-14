@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/minio/minio-go/v7"
@@ -28,6 +29,19 @@ func TestParseConnectionUsesDBXConnectionFields(t *testing.T) {
 	}
 	if connection.bucket != "example-bucket" || connection.accessKey != "access-key" || connection.secretKey != "secret-key" {
 		t.Fatalf("unexpected connection credentials: %#v", connection)
+	}
+}
+
+func TestValidStreamID(t *testing.T) {
+	for _, id := range []string{"stream-1", "preview_2", "a.b"} {
+		if !validStreamID(id) {
+			t.Errorf("expected stream id %q to be valid", id)
+		}
+	}
+	for _, id := range []string{"", "stream/id", "stream id", strings.Repeat("x", 129)} {
+		if validStreamID(id) {
+			t.Errorf("expected stream id %q to be invalid", id)
+		}
 	}
 }
 

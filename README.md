@@ -11,10 +11,12 @@ The Go Sidecar owns S3 connection lifecycle, credentials, and object operations;
 - Separate endpoint protocol and host fields, plus a base path (defaults to `/`, the whole bucket) for providers such as UFile.
 - Optional region: empty falls back to `us-east-1`, and MinIO accepts any region.
 - Long-lived access keys plus optional STS session tokens.
-- Root and nested object listing with cursor pagination, image/video/audio/Markdown/Word previews, writes, directory markers, recursive deletes, and rename.
+- Root and nested object listing with cursor pagination, bounded image/video/audio/Markdown/Word previews, writes, directory markers, recursive deletes, and rename.
 - Optimistic write protection with ETags and a 4 MiB inline payload limit enforced by the DBX filesystem contract.
 
-Object contents are transferred through DBX's bounded filesystem API. The plugin is not a general-purpose multipart upload client; large-object transfer requires a future DBX streaming capability.
+Object contents are transferred through the optional DBX plugin stream API. The S3 sidecar reads in 256 KiB chunks and emits bounded `host.stream.*` events; the UI assembles only the selected preview, not a single oversized JSON-RPC response. Archive and unknown binary objects are not read for preview, and known preview formats are size-gated in the UI: text/Markdown up to 2 MiB, Word/media up to 4 MiB, and spreadsheets up to 2 MiB. These are preview limits only; they do not truncate or delete remote objects. Other plugins can reuse `window.dbxPlugin.stream()` after declaring the `host.events` permission; existing `invoke()` remains available for non-streaming methods.
+
+The generic stream helper returns `{ stream, metadata }`. `stream` is a browser `ReadableStream<Uint8Array>` and `metadata` contains the backend's open result plus the final `bytes` and `truncated` fields. Cancelling the reader invokes the conventional `filesystem/stream/close` method; a different close method can be supplied as `options.closeMethod`.
 
 For UFile S3-compatible storage, configure the endpoint protocol as `https`, endpoint host as `s3-cn-bj.ufileos.com`, bucket as `cogagent`, region as `cn-bj`, and base path as `/cogagent_annotation/data`. The base path is an object prefix: DBX exposes it as the connected filesystem root and never includes it in the DBX-facing `s3:` URIs.
 

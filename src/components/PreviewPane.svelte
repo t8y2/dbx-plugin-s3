@@ -67,7 +67,7 @@
           {/each}
         {:else}<div class="empty">{text.noSheets}</div>{/if}
       {:else if preview.kind === "text"}<pre>{preview.value}</pre>
-      {:else}<div class="empty">{text.binary}</div>{/if}
+      {:else}<div class="empty">{preview.message || text.binary}</div>{/if}
     </div>
   {/if}
 </div>
