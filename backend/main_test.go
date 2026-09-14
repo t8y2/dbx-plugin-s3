@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/minio/minio-go/v7"
@@ -24,6 +28,36 @@ func TestParseConnectionUsesDBXConnectionFields(t *testing.T) {
 	}
 	if connection.bucket != "example-bucket" || connection.accessKey != "access-key" || connection.secretKey != "secret-key" {
 		t.Fatalf("unexpected connection credentials: %#v", connection)
+	}
+}
+
+func TestVerifyBucketFallsBackToListingWhenHeadBucketFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodHead {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Method == http.MethodGet && request.URL.Query().Get("list-type") == "2" {
+			response.Header().Set("Content-Type", "application/xml")
+			_, _ = fmt.Fprint(response, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>example-bucket</Name><KeyCount>0</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			return
+		}
+		response.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := minio.New(endpoint.Host, &minio.Options{Region: "auto", BucketLookup: minio.BucketLookupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pluginError := verifyBucket(&s3Connection{client: client, bucket: "example-bucket"})
+	if pluginError != nil {
+		t.Fatalf("expected listing fallback to verify the bucket: %s", pluginError.Message)
 	}
 }
 

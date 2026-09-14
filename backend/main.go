@@ -281,10 +281,30 @@ func verifyBucket(connection *s3Connection) *dbxpluginsdk.PluginError {
 	defer cancel()
 	exists, err := connection.client.BucketExists(context, connection.bucket)
 	if err != nil {
+		if listErr := verifyBucketByListing(context, connection); listErr == nil {
+			return nil
+		}
 		return remoteError("S3 bucket check failed: " + err.Error())
 	}
 	if !exists {
+		if listErr := verifyBucketByListing(context, connection); listErr == nil {
+			return nil
+		}
 		return remoteError("S3 bucket does not exist: " + connection.bucket)
+	}
+	return nil
+}
+
+func verifyBucketByListing(context context.Context, connection *s3Connection) error {
+	objects := connection.client.ListObjects(context, connection.bucket, minio.ListObjectsOptions{
+		Recursive: false,
+		MaxKeys:   1,
+	})
+	for object := range objects {
+		if object.Err != nil {
+			return object.Err
+		}
+		return nil
 	}
 	return nil
 }
