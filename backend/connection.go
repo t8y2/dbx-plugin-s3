@@ -35,15 +35,12 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	connection, _ := values["connection"].(map[string]any)
 	result := connectionConfig{
 		id:        stringValue(connection["id"]),
-		bucket:    stringValue(connection["database"]),
+		bucket:    emptyIfNull(stringValue(connection["database"])),
 		accessKey: stringValue(connection["username"]),
 	}
 	secrets, _ := connection["connection_secrets"].(map[string]any)
 	result.secretKey = stringValue(secrets["secret_key"])
-	result.sessionToken = strings.TrimSpace(stringValue(secrets["session_token"]))
-	if result.sessionToken == "null" {
-		result.sessionToken = ""
-	}
+	result.sessionToken = emptyIfNull(stringValue(secrets["session_token"]))
 	config, _ := connection["external_config"].(map[string]any)
 	result.endpoint = stringValue(config["endpoint"])
 	result.region = strings.TrimSpace(stringValue(config["region"]))
@@ -96,6 +93,17 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 		return connectionConfig{}, invalidParams("S3 endpoint must be an HTTP(S) origin without a path")
 	}
 	return result, nil
+}
+
+// emptyIfNull rescues optional fields the host persisted as the literal
+// string "null" when they had no explicit default; " null " padding is
+// treated the same way.
+func emptyIfNull(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "null" {
+		return ""
+	}
+	return value
 }
 
 func normalizeBasePath(value string) string {
@@ -223,7 +231,7 @@ func (plugin *plugin) disconnect(connectionID string) (any, *dbxpluginsdk.Plugin
 	plugin.mutex.Unlock()
 	for _, stream := range streams {
 		stream.cancel()
-		_ = stream.object.Close()
+		_ = stream.reader.Close()
 	}
 	for _, upload := range uploads {
 		_ = upload.writer.CloseWithError(errors.New("S3 connection disconnected"))

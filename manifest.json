@@ -96,6 +96,7 @@
           "label": "Bucket",
           "type": "text",
           "binding": "database",
+          "default": "",
           "required": false,
           "description": "Optional. Leave empty to list all buckets after connecting."
         },

@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestManifestSessionTokenDefaultsToEmptyString(t *testing.T) {
+func TestManifestOptionalFieldsDefaultToEmptyString(t *testing.T) {
 	data, err := os.ReadFile("../manifest.json")
 	if err != nil {
 		t.Fatal(err)
@@ -28,21 +28,63 @@ func TestManifestSessionTokenDefaultsToEmptyString(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
+	requiredDefaults := map[string]string{"session_token": "", "bucket": ""}
 	for _, contribution := range manifest.Contributions {
 		if contribution.ID != pluginID+".connection" {
 			continue
 		}
 		for _, field := range contribution.Fields {
-			if field.Key == "session_token" {
+			if expected, tracked := requiredDefaults[field.Key]; tracked {
 				value, ok := field.Default.(string)
-				if !ok || value != "" || field.Required {
-					t.Fatal("session_token must be optional with an explicit empty-string default")
+				if !ok || value != expected || field.Required {
+					t.Fatalf("%s must be optional with an explicit empty-string default", field.Key)
 				}
-				return
+				delete(requiredDefaults, field.Key)
 			}
 		}
 	}
-	t.Fatal("missing session_token connection field")
+	if len(requiredDefaults) > 0 {
+		t.Fatalf("missing optional connection fields with empty defaults: %v", requiredDefaults)
+	}
+}
+
+func TestParseConnectionTreatsNullBucketAsEmpty(t *testing.T) {
+	testCases := []struct {
+		name     string
+		database any
+		expected string
+	}{
+		{name: "missing", database: nil, expected: ""},
+		{name: "empty", database: "", expected: ""},
+		{name: "legacy null string", database: "null", expected: ""},
+		{name: "padded null string", database: " null\t", expected: ""},
+		{name: "real bucket", database: "example-bucket", expected: "example-bucket"},
+		{name: "null prefix bucket", database: "null-bucket", expected: "null-bucket"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			params := map[string]any{
+				"provider": map[string]any{"id": pluginID + ".connection", "databaseType": "s3"},
+				"connection": map[string]any{
+					"id":       "connection-1",
+					"database": testCase.database,
+					"username": "access-key",
+					"external_config": map[string]any{
+						"endpoint":         "http://127.0.0.1:9000",
+						"addressing_style": "path",
+					},
+					"connection_secrets": map[string]any{"secret_key": "secret-key"},
+				},
+			}
+			config, pluginError := parseConnection(params)
+			if pluginError != nil {
+				t.Fatal(pluginError.Message)
+			}
+			if config.bucket != testCase.expected {
+				t.Errorf("unexpected bucket: got %q, want %q", config.bucket, testCase.expected)
+			}
+		})
+	}
 }
 
 func TestConnectionMethodsHandleOptionalSessionTokens(t *testing.T) {
