@@ -359,20 +359,17 @@
     try {
       if (typeof window.dbxPlugin?.stream !== "function") throw new Error(text.downloadUnavailable);
       const opened = await window.dbxPlugin.stream("filesystem/stream/open", { uri: entry.uri, maxBytes: 256 * 1024 * 1024, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
-      const reader = opened.stream.getReader();
-      const chunks = [];
-      try {
-        while (true) {
-          const result = await reader.read();
-          if (result.done) break;
-          chunks.push(result.value);
-        }
-      } finally {
-        await reader.cancel().catch(() => undefined);
-      }
+      const bytes = await readStream(opened.stream.getReader());
       if (opened.metadata?.truncated) throw new Error(text.downloadTooLarge);
-      const blob = new Blob(chunks, { type: normalizedType(entry, opened.metadata) });
-      const url = URL.createObjectURL(blob);
+      const contentType = normalizedType(entry, opened.metadata);
+      if (typeof window.dbxPlugin.saveFile === "function") {
+        // The sandboxed iframe cannot trigger downloads (WKWebView cancels blob
+        // navigations), so hand the bytes to the host's native save dialog.
+        // A null result means the user dismissed the dialog; stay quiet.
+        await window.dbxPlugin.saveFile({ fileName: entry.name, contentType }, bytes);
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = entry.name;

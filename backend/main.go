@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID           = "io.github.t8y2.s3"
-	pluginVersion      = "0.1.7"
+	pluginVersion      = "0.1.8"
 	filesystemProvider = "io.github.t8y2.s3.files"
 	maxInlineBytes     = 4 * 1024 * 1024
 	streamChunkBytes   = 256 * 1024
