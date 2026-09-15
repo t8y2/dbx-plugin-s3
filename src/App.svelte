@@ -4,7 +4,7 @@
   import PreviewPane from "./components/PreviewPane.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { ArrowUp, Download, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { ArrowUp, Download, FileArchive, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
@@ -13,13 +13,13 @@
   const copy = {
     en: {
       title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
-      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.",
+      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.", archiveTooLarge: "ZIP downloads are limited to 220 MiB of source data.", uploading: "Uploading", downloading: "Downloading", downloadZip: "Download as ZIP", downloadZipCount: "ZIP {count} items",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
-      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。",
+      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。", archiveTooLarge: "ZIP 打包的源数据不能超过 220 MiB。", uploading: "正在上传", downloading: "正在下载", downloadZip: "下载为 ZIP", downloadZipCount: "打包 {count} 项",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
     },
@@ -36,6 +36,8 @@
   let loading = $state(false);
   let operating = $state(false);
   let error = $state("");
+  let checkedUris = $state([]);
+  let transfer = $state(null);
   let leftWidth = $state(42);
   let uploadInput = $state(null);
   let dialog = $state(null);
@@ -80,7 +82,7 @@
     return window.dbxPlugin.invoke(method, { ...params, connectionId: connectionId(), providerId }, options);
   }
 
-  async function readStream(reader) {
+  async function readStream(reader, onProgress) {
     const chunks = [];
     let total = 0;
     try {
@@ -89,6 +91,7 @@
         if (result.done) break;
         chunks.push(result.value);
         total += result.value.byteLength;
+        onProgress?.(total);
       }
     } finally {
       if (previewReader === reader) previewReader = undefined;
@@ -127,8 +130,11 @@
       }
       currentUri = uri;
       nextCursor = result?.nextCursor || "";
-      if (!append) bucketMode = !!result?.bucketMode;
-      if (!append) clearPreview();
+      if (!append) {
+        bucketMode = !!result?.bucketMode;
+        checkedUris = [];
+        clearPreview();
+      }
     } catch (cause) {
       error = cause?.message || String(cause);
     } finally {
@@ -205,7 +211,7 @@
 
   function openContextMenu(event, entry) {
     const menuWidth = 150;
-    const menuHeight = entry.kind === "bucket" ? 40 : entry.kind === "directory" ? 80 : 116;
+    const menuHeight = entry.kind === "directory" || entry.kind === "bucket" ? 80 : 116;
     contextMenu = {
       entry,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -235,6 +241,7 @@
       error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
     } finally {
       operating = false;
+      transfer = null;
     }
   }
 
@@ -253,7 +260,13 @@
     input.value = "";
     if (!files.length) return;
     await runOperation(async () => {
+      const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+      transfer = { kind: "upload", name: "", sent: 0, total: totalBytes, fileIndex: 0, fileCount: files.length };
+      let completedBytes = 0;
       for (const file of files) {
+        transfer.fileIndex += 1;
+        transfer.name = file.name;
+        transfer.sent = completedBytes;
         if (file.size > 4 * 1024 * 1024) {
           if (typeof window.dbxPlugin?.sendBinary !== "function") throw new Error(text.uploadLargeUnavailable);
           const uploadId = globalThis.crypto?.randomUUID?.() || `upload-${Date.now()}`;
@@ -261,18 +274,45 @@
           try {
             for (let offset = 0; offset < file.size; offset += 1024 * 1024) {
               await window.dbxPlugin.sendBinary(opened.channel, await file.slice(offset, offset + 1024 * 1024).arrayBuffer());
+              transfer.sent = Math.min(totalBytes, completedBytes + Math.min(offset + 1024 * 1024, file.size));
             }
             await invoke("filesystem/upload/finish", { uploadId }, { timeoutMs: 120000 });
           } catch (cause) {
             await invoke("filesystem/upload/abort", { uploadId }, { timeoutMs: 120000 }).catch(() => undefined);
             throw cause;
           }
-          continue;
+        } else {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          await invoke("filesystem/write", { uri: childUri(currentUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
         }
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        await invoke("filesystem/write", { uri: childUri(currentUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
+        completedBytes += file.size;
+        transfer.sent = completedBytes;
       }
     });
+  }
+
+  function toggleCheck(entry) {
+    checkedUris = checkedUris.includes(entry.uri) ? checkedUris.filter((uri) => uri !== entry.uri) : [...checkedUris, entry.uri];
+  }
+
+  function toggleCheckAll() {
+    const uris = entries.map((entry) => entry.uri);
+    const allChecked = uris.length > 0 && uris.every((uri) => checkedUris.includes(uri));
+    checkedUris = allChecked ? checkedUris.filter((uri) => !uris.includes(uri)) : [...new Set([...checkedUris, ...uris])];
+  }
+
+  function archiveFileName(uris) {
+    if (uris.length === 1) {
+      const segments = uris[0].replace(/\/+$/, "").split("/").filter(Boolean);
+      const name = decodeURIComponent(segments[segments.length - 1] || "s3");
+      return `${name}.zip`;
+    }
+    return `s3-files-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.zip`;
+  }
+
+  function transferPercent() {
+    if (!transfer?.total) return 0;
+    return Math.min(100, Math.floor((transfer.sent / transfer.total) * 100));
   }
 
   async function renameEntry(entry) {
@@ -351,34 +391,63 @@
     return slash <= value.indexOf(":") ? "" : `${value.slice(0, slash)}/`;
   }
 
+  async function saveBytes(fileName, contentType, bytes) {
+    if (typeof window.dbxPlugin.saveFile === "function") {
+      // The sandboxed iframe cannot trigger downloads (WKWebView cancels blob
+      // navigations), so hand the bytes to the host's native save dialog.
+      // A null result means the user dismissed the dialog; stay quiet.
+      await window.dbxPlugin.saveFile({ fileName, contentType }, bytes);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   async function downloadEntry(entry) {
     contextMenu = null;
     if (entry.kind === "directory" || entry.kind === "bucket") return;
     operating = true;
     error = "";
+    transfer = { kind: "download", name: entry.name, sent: 0, total: Number.isFinite(entry.size) ? entry.size : 0 };
     try {
       if (typeof window.dbxPlugin?.stream !== "function") throw new Error(text.downloadUnavailable);
       const opened = await window.dbxPlugin.stream("filesystem/stream/open", { uri: entry.uri, maxBytes: 256 * 1024 * 1024, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
-      const bytes = await readStream(opened.stream.getReader());
+      transfer.total = opened.metadata?.size || transfer.total;
+      const bytes = await readStream(opened.stream.getReader(), (sent) => { transfer.sent = sent; });
       if (opened.metadata?.truncated) throw new Error(text.downloadTooLarge);
-      const contentType = normalizedType(entry, opened.metadata);
-      if (typeof window.dbxPlugin.saveFile === "function") {
-        // The sandboxed iframe cannot trigger downloads (WKWebView cancels blob
-        // navigations), so hand the bytes to the host's native save dialog.
-        // A null result means the user dismissed the dialog; stay quiet.
-        await window.dbxPlugin.saveFile({ fileName: entry.name, contentType }, bytes);
-        return;
-      }
-      const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = entry.name;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      await saveBytes(entry.name, normalizedType(entry, opened.metadata), bytes);
     } catch (cause) {
       error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
     } finally {
       operating = false;
+      transfer = null;
+    }
+  }
+
+  async function downloadArchive(uris) {
+    contextMenu = null;
+    if (!uris.length) return;
+    const fileName = archiveFileName(uris);
+    operating = true;
+    error = "";
+    transfer = { kind: "archive", name: fileName, sent: 0, total: 0 };
+    try {
+      if (typeof window.dbxPlugin?.stream !== "function") throw new Error(text.downloadUnavailable);
+      const opened = await window.dbxPlugin.stream("filesystem/archive/open", { uris, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
+      transfer.total = opened.metadata?.size || 0;
+      const bytes = await readStream(opened.stream.getReader(), (sent) => { transfer.sent = sent; });
+      if (opened.metadata?.truncated) throw new Error(text.archiveTooLarge);
+      await saveBytes(fileName, "application/zip", bytes);
+      checkedUris = [];
+    } catch (cause) {
+      error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
+    } finally {
+      operating = false;
+      transfer = null;
     }
   }
 
@@ -427,18 +496,20 @@
       <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
       <Button variant="outline" size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
       <Button size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
+      {#if checkedUris.length}<Button variant="outline" size="sm" disabled={loading || operating} title={text.downloadZipCount.replace("{count}", checkedUris.length)} onclick={() => downloadArchive(checkedUris)}><FileArchive size={14} />{text.downloadZipCount.replace("{count}", checkedUris.length)}</Button>{/if}
     </div>
     <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
   </div>
+  {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span></div>{/if}
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
   <section class="split" style={`grid-template-columns: minmax(240px, ${leftWidth}%) 2px minmax(280px, 1fr)`}>
-    <ObjectList {entries} {selected} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} />
+    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
     <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
-      {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button>{/if}
+      {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button><button role="menuitem" onclick={() => downloadArchive([contextMenu.entry.uri])}><FileArchive size={14} />{text.downloadZip}</button>{/if}
       {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket"}<button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>{/if}
@@ -473,6 +544,11 @@
   .toolbar input { min-width: 0; flex: 1; height: 30px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 4px; padding: 6px 9px; color: inherit; background: color-mix(in srgb, CanvasText 4%, transparent); font: 12px ui-monospace, monospace; outline: none; }
   .toolbar input:focus { border-color: var(--color-primary, #6d5dfc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #6d5dfc) 18%, transparent); }
   .error { margin: 8px 0; padding: 10px; border: 1px solid #d44a4a66; border-radius: 8px; color: #d44a4a; font-size: 12px; }
+  .transfer { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 12px; border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 8px; font-size: 12px; }
+  .transfer-label { min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .transfer-bar { flex: 1; height: 6px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, CanvasText 10%, transparent); }
+  .transfer-fill { height: 100%; border-radius: 3px; background: var(--color-primary, #6d5dfc); transition: width 150ms ease; }
+  .transfer-percent { flex: 0 0 auto; min-width: 34px; text-align: right; color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-variant-numeric: tabular-nums; }
   .split { display: grid; min-height: 0; flex: 1; overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 6px; box-shadow: 0 1px 3px color-mix(in srgb, CanvasText 7%, transparent); }
   .splitter { width: 2px; height: 100%; padding: 0; border-radius: 0; background: color-mix(in srgb, CanvasText 11%, transparent); cursor: col-resize; }.splitter:hover { background: var(--color-primary, #6d5dfc); }
   :global(html), :global(body), :global(#app) { height: 100%; overflow: hidden; }

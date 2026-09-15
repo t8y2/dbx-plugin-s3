@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID           = "io.github.t8y2.s3"
-	pluginVersion      = "0.1.8"
+	pluginVersion      = "0.1.9"
 	filesystemProvider = "io.github.t8y2.s3.files"
 	maxInlineBytes     = 4 * 1024 * 1024
 	streamChunkBytes   = 256 * 1024
@@ -96,6 +96,11 @@ func (plugin *plugin) Handle(
 			return nil, pluginError
 		}
 		return plugin.openStream(values, emitter)
+	case "filesystem/archive/open":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.openArchive(values, emitter)
 	case "filesystem/stream/close":
 		if pluginError := requireFilesystemProvider(values); pluginError != nil {
 			return nil, pluginError

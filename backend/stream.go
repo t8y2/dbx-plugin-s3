@@ -15,7 +15,7 @@ import (
 type s3Stream struct {
 	id           string
 	connectionID string
-	object       *minio.Object
+	reader       io.ReadCloser
 	context      context.Context
 	cancel       context.CancelFunc
 	maxBytes     int64
@@ -57,7 +57,7 @@ func (plugin *plugin) openStream(values map[string]any, emitter *dbxpluginsdk.Em
 		_ = object.Close()
 		return nil, remoteError("S3 stream failed: " + err.Error())
 	}
-	stream := &s3Stream{id: streamID, connectionID: stringValue(values["connectionId"]), object: object, context: streamContext, cancel: cancel, maxBytes: maxBytes}
+	stream := &s3Stream{id: streamID, connectionID: stringValue(values["connectionId"]), reader: object, context: streamContext, cancel: cancel, maxBytes: maxBytes}
 	plugin.mutex.Lock()
 	if plugin.streams == nil {
 		plugin.streams = make(map[string]*s3Stream)
@@ -85,7 +85,7 @@ func (plugin *plugin) closeStream(values map[string]any) (any, *dbxpluginsdk.Plu
 	plugin.mutex.Unlock()
 	if stream != nil {
 		stream.cancel()
-		_ = stream.object.Close()
+		_ = stream.reader.Close()
 	}
 	return map[string]any{"success": true}, nil
 }
@@ -93,7 +93,7 @@ func (plugin *plugin) closeStream(values map[string]any) (any, *dbxpluginsdk.Plu
 func (plugin *plugin) pumpStream(stream *s3Stream, emitter *dbxpluginsdk.Emitter) {
 	defer func() {
 		stream.cancel()
-		_ = stream.object.Close()
+		_ = stream.reader.Close()
 		plugin.mutex.Lock()
 		delete(plugin.streams, stream.id)
 		plugin.mutex.Unlock()
@@ -112,7 +112,7 @@ func (plugin *plugin) pumpStream(stream *s3Stream, emitter *dbxpluginsdk.Emitter
 		if remaining < readSize {
 			readSize = remaining
 		}
-		readCount, err := stream.object.Read(buffer[:readSize])
+		readCount, err := stream.reader.Read(buffer[:readSize])
 		if readCount > 0 {
 			if pluginError := emitter.Event("host.stream.chunk", map[string]any{
 				"streamId":   stream.id,
@@ -138,7 +138,7 @@ func (plugin *plugin) pumpStream(stream *s3Stream, emitter *dbxpluginsdk.Emitter
 		}
 	}
 	var extra [1]byte
-	readCount, err := stream.object.Read(extra[:])
+	readCount, err := stream.reader.Read(extra[:])
 	if err != nil && !errors.Is(err, io.EOF) {
 		plugin.emitStreamError(stream, emitter, err)
 		return
