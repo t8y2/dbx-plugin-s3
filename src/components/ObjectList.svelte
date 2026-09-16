@@ -7,6 +7,10 @@
   let sentinelVisible = false;
 
   const allChecked = $derived(entries.length > 0 && entries.every((entry) => checkedUris.includes(entry.uri)));
+  const someChecked = $derived(!allChecked && entries.some((entry) => checkedUris.includes(entry.uri)));
+  // Native checkboxes lose their checkmark when the click default is
+  // suppressed while Svelte owns the checked state, so draw our own.
+  const headerCheckState = $derived(allChecked ? "true" : someChecked ? "mixed" : "false");
 
   function triggerLoadMore() {
     if (!nextCursor || loading || sentinelVisible) return;
@@ -45,14 +49,20 @@
   {:else if !entries.length}<div class="empty">{text.empty}</div>
   {:else}
     <div class="list-header">
-      <input class="list-check" type="checkbox" aria-label={text.file} checked={allChecked} disabled={loading} onclick={(event) => { event.preventDefault(); onToggleCheckAll?.(); }} />
+      <button type="button" class="list-check" role="checkbox" aria-checked={headerCheckState} aria-label={text.file} disabled={loading} onclick={() => onToggleCheckAll?.()}>
+        {#if headerCheckState === "true"}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3 5 8.8 9.5 3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        {:else if headerCheckState === "mixed"}<span class="check-mixed" aria-hidden="true"></span>{/if}
+      </button>
       <span class="header-file">{text.file}</span><span>{text.type}</span>
     </div>
     <div class="entries" bind:this={listElement} onscroll={handleListScroll}>
       {#each entries as entry (entry.uri)}
-        <div class="entry-row" class:checked={checkedUris.includes(entry.uri)}>
-          <input class="list-check" type="checkbox" aria-label={entry.name} checked={checkedUris.includes(entry.uri)} onclick={(event) => { event.preventDefault(); onToggleCheck?.(entry); }} />
-          <button class:selected={selected?.uri === entry.uri} class="entry" onclick={() => onSelect?.(entry)} ondblclick={() => onOpen?.(entry)} oncontextmenu={(event) => handleContextMenu(event, entry)}>
+        {@const isChecked = checkedUris.includes(entry.uri)}
+        <div class="entry-row" class:checked={isChecked} class:selected={selected?.uri === entry.uri}>
+          <button type="button" class="list-check" role="checkbox" aria-checked={isChecked ? "true" : "false"} aria-label={entry.name} onclick={() => onToggleCheck?.(entry)}>
+            {#if isChecked}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3 5 8.8 9.5 3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>{/if}
+          </button>
+          <button class="entry" onclick={() => onSelect?.(entry)} ondblclick={() => onOpen?.(entry)} oncontextmenu={(event) => handleContextMenu(event, entry)}>
             <span class="entry-name"><FileIcon {entry} />{entry.name}</span>
             <span class="entry-meta">{entry.kind === "directory" || entry.kind === "bucket" ? text.folder : entry.contentType || ""}</span>
           </button>
@@ -67,13 +77,21 @@
   .list-panel { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
   .list-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 38px; min-height: 38px; padding: 0 12px 0 10px; color: color-mix(in srgb, CanvasText 55%, transparent); border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
   .header-file { flex: 1; }
-  .list-check { flex: 0 0 auto; width: 13px; height: 13px; margin: 0; accent-color: var(--color-primary, #6d5dfc); cursor: pointer; }
+  .list-check { display: grid; flex: 0 0 auto; place-items: center; width: 14px; height: 14px; padding: 0; color: transparent; border: 1.5px solid color-mix(in srgb, CanvasText 35%, transparent); border-radius: 3.5px; background: transparent; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; }
+  .list-check:hover { border-color: var(--color-primary, #6d5dfc); }
+  .list-check:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary, #6d5dfc) 55%, transparent); outline-offset: 1px; }
+  .list-check:disabled { cursor: default; opacity: .45; }
+  .list-check svg { width: 11px; height: 11px; }
+  .list-check[aria-checked="true"] { color: var(--color-primary-foreground, #fff); border-color: var(--color-primary, #6d5dfc); background: var(--color-primary, #6d5dfc); }
+  .list-check[aria-checked="mixed"] { border-color: var(--color-primary, #6d5dfc); background: color-mix(in srgb, var(--color-primary, #6d5dfc) 28%, transparent); }
+  .check-mixed { width: 7px; height: 1.5px; border-radius: 1px; background: var(--color-primary, #6d5dfc); }
   .entries { min-height: 0; flex: 1; overflow: auto; }
   .entry-row { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; border-bottom: 1px solid color-mix(in srgb, CanvasText 7%, transparent); }
   .entry-row:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
   .entry-row.checked { background: color-mix(in srgb, var(--color-primary, #6d5dfc) 7%, transparent); }
+  .entry-row.selected { background: color-mix(in srgb, var(--color-primary, #6d5dfc) 16%, transparent); }
+  .entry-row.selected:hover { background: color-mix(in srgb, var(--color-primary, #6d5dfc) 20%, transparent); }
   .entry { display: flex; align-items: center; width: 100%; min-height: 32px; justify-content: space-between; gap: 10px; padding: 5px 0; color: inherit; border: 0; border-radius: 0; background: transparent; text-align: left; font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; transition: background-color 120ms ease; }
-  .entry.selected { box-shadow: inset 2px 0 var(--color-primary, #6d5dfc); }
   .entry-name, .entry-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .entry-name { display: flex; align-items: center; gap: 7px; }
   .entry-meta { color: color-mix(in srgb, CanvasText 50%, transparent); font-size: 11px; }

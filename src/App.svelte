@@ -8,6 +8,9 @@
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
+  // Base64 inflates JSON-RPC requests past the host bridge limit at a few MiB,
+  // so anything larger than this goes through the binary upload channel.
+  const inlineUploadBytes = 256 * 1024;
   const archiveExtensions = new Set(["7z", "bz2", "gz", "rar", "tar", "tgz", "zip"]);
   const textExtensions = new Set(["c", "conf", "cpp", "css", "go", "h", "html", "ini", "java", "js", "json", "jsx", "log", "py", "rs", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "xml", "yaml", "yml"]);
   const copy = {
@@ -15,13 +18,13 @@
       title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
       loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.", archiveTooLarge: "ZIP downloads are limited to 220 MiB of source data.", uploading: "Uploading", downloading: "Downloading", downloadZip: "Download as ZIP", downloadZipCount: "ZIP {count} items",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
-      markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
+      markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
       loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。", archiveTooLarge: "ZIP 打包的源数据不能超过 220 MiB。", uploading: "正在上传", downloading: "正在下载", downloadZip: "下载为 ZIP", downloadZipCount: "打包 {count} 项",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
-      markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
+      markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
     },
   };
 
@@ -230,13 +233,16 @@
     return slash <= value.indexOf("://") + 2 ? `${value}/` : `${value.slice(0, slash + 1)}`;
   }
 
-  async function runOperation(operation) {
+  async function runOperation(operation, refreshUri = currentUri) {
     if (operating) return;
     operating = true;
     error = "";
     try {
       await operation();
-      await load(currentUri);
+      // The user may have navigated elsewhere mid-operation (uploads run for
+      // minutes); only reload the folder the operation targeted if it is still
+      // on screen, never yank them back to it.
+      if (currentUri === refreshUri) await load(currentUri);
     } catch (cause) {
       error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
     } finally {
@@ -259,6 +265,11 @@
     const files = [...(input.files || [])];
     input.value = "";
     if (!files.length) return;
+    // Pin the target folder up front: a multi-file upload runs for a while
+    // and later files must land next to the first, not in whatever folder
+    // the user is browsing by then.
+    const uploadUri = currentUri;
+    const canStream = typeof window.dbxPlugin?.sendBinary === "function";
     await runOperation(async () => {
       const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
       transfer = { kind: "upload", name: "", sent: 0, total: totalBytes, fileIndex: 0, fileCount: files.length };
@@ -267,10 +278,10 @@
         transfer.fileIndex += 1;
         transfer.name = file.name;
         transfer.sent = completedBytes;
-        if (file.size > 4 * 1024 * 1024) {
-          if (typeof window.dbxPlugin?.sendBinary !== "function") throw new Error(text.uploadLargeUnavailable);
+        if (file.size > 4 * 1024 * 1024 && !canStream) throw new Error(text.uploadLargeUnavailable);
+        if (canStream && file.size > inlineUploadBytes) {
           const uploadId = globalThis.crypto?.randomUUID?.() || `upload-${Date.now()}`;
-          const opened = await invoke("filesystem/upload/open", { uploadId, uri: childUri(currentUri, file.name), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
+          const opened = await invoke("filesystem/upload/open", { uploadId, uri: childUri(uploadUri, file.name), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
           try {
             for (let offset = 0; offset < file.size; offset += 1024 * 1024) {
               await window.dbxPlugin.sendBinary(opened.channel, await file.slice(offset, offset + 1024 * 1024).arrayBuffer());
@@ -283,12 +294,12 @@
           }
         } else {
           const bytes = new Uint8Array(await file.arrayBuffer());
-          await invoke("filesystem/write", { uri: childUri(currentUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
+          await invoke("filesystem/write", { uri: childUri(uploadUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
         }
         completedBytes += file.size;
         transfer.sent = completedBytes;
       }
-    });
+    }, uploadUri);
   }
 
   function toggleCheck(entry) {
@@ -327,6 +338,16 @@
     dialogOpen = true;
   }
 
+  function deleteChecked() {
+    const deletable = entries.filter((entry) => checkedUris.includes(entry.uri) && entry.kind !== "bucket");
+    if (!deletable.length) {
+      error = text.cannotDeleteBucket;
+      return;
+    }
+    dialog = { kind: "delete-batch", count: deletable.length, value: "" };
+    dialogOpen = true;
+  }
+
   function handleDialogOpenChange(open) {
     dialogOpen = open;
     if (!open) dialog = null;
@@ -348,7 +369,21 @@
       cancelDialog();
       await runOperation(async () => {
         await invoke("filesystem/delete", { uri: active.entry.uri, recursive: active.entry.kind === "directory" });
+        checkedUris = checkedUris.filter((uri) => uri !== active.entry.uri);
         clearPreview();
+      });
+      return;
+    }
+    if (active.kind === "delete-batch") {
+      const targets = entries.filter((entry) => checkedUris.includes(entry.uri) && entry.kind !== "bucket");
+      cancelDialog();
+      await runOperation(async () => {
+        for (const entry of targets) {
+          await invoke("filesystem/delete", { uri: entry.uri, recursive: entry.kind === "directory" });
+        }
+        const deletedUris = new Set(targets.map((entry) => entry.uri));
+        checkedUris = checkedUris.filter((uri) => !deletedUris.has(uri));
+        if (selected && deletedUris.has(selected.uri)) clearPreview();
       });
       return;
     }
@@ -497,6 +532,7 @@
       <Button variant="outline" size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
       <Button size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
       {#if checkedUris.length}<Button variant="outline" size="sm" disabled={loading || operating} title={text.downloadZipCount.replace("{count}", checkedUris.length)} onclick={() => downloadArchive(checkedUris)}><FileArchive size={14} />{text.downloadZipCount.replace("{count}", checkedUris.length)}</Button>{/if}
+      {#if checkedUris.length}<Button variant="destructive" size="sm" disabled={loading || operating} onclick={deleteChecked}><Trash2 size={14} />{text.deleteCount.replace("{count}", checkedUris.length)}</Button>{/if}
     </div>
     <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
   </div>
@@ -519,15 +555,16 @@
     {#if dialog}
       <Dialog.Content showCloseButton={false} class="dialog-content">
         <Dialog.Header>
-          <Dialog.Title>{dialog.kind === "delete" ? text.delete : dialog.kind === "rename" ? text.rename : text.newFolder}</Dialog.Title>
-          {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>{/if}
+          <Dialog.Title>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : text.newFolder}</Dialog.Title>
+          {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>
+          {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>{/if}
         </Dialog.Header>
-        {#if dialog.kind !== "delete"}
+        {#if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
           <label class="dialog-field">{dialog.kind === "rename" ? text.newName : text.folderName}<input bind:value={dialog.value} onkeydown={(event) => event.key === "Enter" && confirmDialog()} /></label>
         {/if}
         <Dialog.Footer class="dialog-actions">
           <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
-          <Button variant={dialog.kind === "delete" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" ? text.delete : text.confirm}</Button>
+          <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
         </Dialog.Footer>
       </Dialog.Content>
     {/if}

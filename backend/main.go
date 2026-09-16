@@ -19,7 +19,6 @@ const (
 	defaultPageSize    = 200
 	maxPageSize        = 1000
 	operationTimeout   = 30 * time.Second
-	uploadTimeout      = 30 * time.Minute
 )
 
 type plugin struct {
