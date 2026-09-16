@@ -443,6 +443,18 @@ func testFilesystemLifecycle(t *testing.T, basePath string) {
 		t.Fatalf("unexpected second page: %#v", secondPage)
 	}
 
+	directories, pluginError := invokeIntegration(t, plugin, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3:/", "limit": 20, "directoriesOnly": true}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	directoryEntries := directories["entries"].([]filesystemEntry)
+	if len(directoryEntries) != 1 || directoryEntries[0].Name != "folder" || directoryEntries[0].Kind != "directory" {
+		t.Fatalf("unexpected directories-only listing: %#v", directories)
+	}
+	if _, hasCursor := directories["nextCursor"]; hasCursor {
+		t.Fatal("directories-only listing must not paginate when the prefix is drained")
+	}
+
 	if _, pluginError = invokeIntegration(t, plugin, "filesystem/createDirectory", mergeIntegration(base, map[string]any{"uri": "s3://example-bucket/existing/"})); pluginError != nil {
 		t.Fatal(pluginError.Message)
 	}

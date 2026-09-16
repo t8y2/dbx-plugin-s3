@@ -51,15 +51,30 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 	cursor := decodeCursor(stringValue(values["cursor"]))
 	remotePrefix := connection.remoteKey(prefix)
 	remoteCursor := connection.remoteKey(cursor)
+	// Folder trees want directories only, but S3 pages folders and files
+	// together; keep draining pages (bounded by a file-scan budget) and skip
+	// files so one request yields a full page of folders.
+	directoriesOnly := boolValue(values["directoriesOnly"])
 	objects := connection.client.ListObjects(context, path.bucket, minio.ListObjectsOptions{Prefix: remotePrefix, Recursive: false, StartAfter: remoteCursor, MaxKeys: limit + 1})
 	listedObjects := make([]minio.ObjectInfo, 0, limit+1)
 	seenKeys := make(map[string]struct{}, limit+1)
+	scannedFiles := 0
+	lastScanned := ""
+	budgetExhausted := false
 	for object := range objects {
 		if object.Err != nil {
 			return nil, remoteError("S3 list failed: " + object.Err.Error())
 		}
 		localKey, ok := connection.localKey(object.Key)
 		if !ok || localKey == prefix {
+			continue
+		}
+		lastScanned = localKey
+		if directoriesOnly && !strings.HasSuffix(localKey, "/") {
+			if scannedFiles++; scannedFiles >= maxDirectoryScanKeys {
+				budgetExhausted = true
+				break
+			}
 			continue
 		}
 		entry := entryFromObject(minio.ObjectInfo{Key: localKey}, path.bucket)
@@ -84,6 +99,9 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 	result := map[string]any{"entries": entries}
 	if len(listedObjects) > limit {
 		result["nextCursor"] = encodeCursor(listedObjects[limit-1].Key)
+	} else if budgetExhausted && lastScanned != "" {
+		// The scan budget ran out mid-page; resume after the last key examined.
+		result["nextCursor"] = encodeCursor(lastScanned)
 	}
 	return result, nil
 }

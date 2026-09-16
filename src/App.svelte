@@ -2,9 +2,10 @@
   import { onDestroy, onMount } from "svelte";
   import ObjectList from "./components/ObjectList.svelte";
   import PreviewPane from "./components/PreviewPane.svelte";
+  import FolderTree from "./components/FolderTree.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { ArrowUp, Download, FileArchive, FolderOpen, FolderPlus, Link2, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, Link2, ListTree, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
@@ -20,6 +21,7 @@
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
+      folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path", rootLabel: "S3",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
@@ -27,6 +29,7 @@
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
+      folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径", rootLabel: "S3",
     },
   };
 
@@ -44,6 +47,10 @@
   let checkedUris = $state([]);
   let transfer = $state(null);
   let leftWidth = $state(42);
+  let treeNodes = $state({});
+  let treeVisible = $state(true);
+  let treeWidth = $state(192);
+  let pathEditing = $state(false);
   let uploadInput = $state(null);
   let dialog = $state(null);
   let dialogOpen = $state(false);
@@ -66,6 +73,97 @@
   const connectionId = () => context?.connectionId || "";
   const isZh = () => (window.dbxPlugin?.locale || "en").toLowerCase().startsWith("zh");
   const decode = (value) => window.dbxPlugin.decodeBase64(value);
+  const TREE_ROOT = "s3:/";
+
+  function treeAncestors(uri) {
+    const parts = uri.replace(/^s3:\/*/, "").split("/").filter(Boolean);
+    const ancestors = [TREE_ROOT];
+    let accumulated = "s3://";
+    for (const part of parts) {
+      accumulated += `${part}/`;
+      ancestors.push(accumulated);
+    }
+    return ancestors;
+  }
+
+  function treeNode(uri) {
+    treeNodes[uri] ||= { open: false, loaded: false, loading: false, children: [], nextCursor: "" };
+    return treeNodes[uri];
+  }
+
+  // Tree children come from a directories-only listing: the sidecar skips
+  // files server-side, so one request returns a full page of folders no
+  // matter how many files sit between them.
+  async function loadTreeChildren(uri, startCursor = "") {
+    const node = treeNode(uri);
+    if (node.loading) return;
+    node.loading = true;
+    if (!startCursor) {
+      node.children = [];
+      node.nextCursor = "";
+    }
+    try {
+      const result = await invoke("filesystem/list", { uri, cursor: startCursor || undefined, limit: 1000, directoriesOnly: true });
+      if (treeNodes[uri] !== node) return;
+      const folders = (result?.entries || []).filter((entry) => entry.kind === "directory" || entry.kind === "bucket");
+      node.children = startCursor ? [...(node.children || []), ...folders] : folders;
+      node.nextCursor = result?.nextCursor || "";
+      node.loaded = true;
+    } catch {
+      // The object list surfaces listing errors; the tree is a secondary view
+      // and degrades to the folders gathered so far.
+      node.loaded = true;
+    } finally {
+      node.loading = false;
+    }
+  }
+
+  function toggleTreeNode(uri) {
+    const node = treeNode(uri);
+    node.open = !node.open;
+    // Re-expansions reuse the cached children; operations refresh open nodes.
+    if (node.open && !node.loaded && !node.loading) void loadTreeChildren(uri);
+  }
+
+  function continueTrees() {
+    // Scroll-to-bottom continuation: pull the next folder batch for every
+    // expanded node that still has a cursor.
+    for (const [uri, node] of Object.entries(treeNodes)) {
+      if (node.open && node.nextCursor && !node.loading) void loadTreeChildren(uri, node.nextCursor);
+    }
+  }
+
+  function selectTreeNode(uri) {
+    void load(uri);
+  }
+
+  async function expandTreePath(uri) {
+    const ancestors = treeAncestors(uri);
+    // Open every level above the target folder first so the spinner shows
+    // while slow listings load, never the target itself.
+    for (const ancestor of uri === TREE_ROOT ? ancestors : ancestors.slice(0, -1)) {
+      const node = treeNode(ancestor);
+      node.open = true;
+      if (!node.loaded && !node.loading) await loadTreeChildren(ancestor);
+    }
+  }
+
+  async function refreshOpenTree() {
+    for (const [uri, node] of Object.entries(treeNodes)) {
+      if (node.open && !node.loading) void loadTreeChildren(uri);
+    }
+  }
+
+  const breadcrumbs = $derived.by(() => {
+    const parts = currentUri.replace(/^s3:\/*/, "").split("/").filter(Boolean);
+    const crumbs = [{ uri: TREE_ROOT, name: text.rootLabel }];
+    let accumulated = "s3://";
+    for (const part of parts) {
+      accumulated += `${part}/`;
+      crumbs.push({ uri: accumulated, name: decodeURIComponent(part) });
+    }
+    return crumbs;
+  });
   const extension = (name) => name.split(".").pop()?.toLowerCase() || "";
   const mimeByExtension = {
     aac: "audio/aac", avif: "image/avif", bmp: "image/bmp", csv: "text/csv", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -149,6 +247,7 @@
         bucketMode = !!result?.bucketMode;
         checkedUris = [];
         clearPreview();
+        void expandTreePath(uri);
       }
     } catch (cause) {
       error = cause?.message || String(cause);
@@ -260,6 +359,11 @@
     } finally {
       operating = false;
       transfer = null;
+      void refreshOpenTree();
+      // Closed nodes keep their cached children; drop the cache of the folder
+      // this operation touched so a later expansion refetches it.
+      const touched = treeNode(refreshUri);
+      if (touched && !touched.open) touched.loaded = false;
     }
   }
 
@@ -565,11 +669,35 @@
     }
   }
 
+  function startTreeResize(event) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = treeWidth;
+    const update = (move) => {
+      treeWidth = Math.round(Math.min(420, Math.max(140, startWidth + (move.clientX - startX))));
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", update);
+      window.removeEventListener("pointerup", stop);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", update);
+    window.addEventListener("pointerup", stop, { once: true });
+  }
+
   function startResize(event) {
     event.preventDefault();
+    // The list column shares only the space the tree has not claimed, so the
+    // drag delta must map onto that remainder — anchoring to the body width
+    // makes the splitter teleport when the tree panel is visible.
+    const startX = event.clientX;
+    const startPercent = leftWidth;
     const update = (move) => {
-      const width = document.body.clientWidth || 1;
-      leftWidth = Math.min(70, Math.max(24, (move.clientX / width) * 100));
+      const free = Math.max(1, (document.body.clientWidth || 1) - (treeVisible ? treeWidth + 6 : 0) - 6);
+      leftWidth = Math.min(70, Math.max(24, startPercent + ((move.clientX - startX) / free) * 100));
     };
     const stop = () => {
       window.removeEventListener("pointermove", update);
@@ -590,6 +718,14 @@
       text = isZh() ? copy.zh : copy.en;
       load("s3:/");
     });
+    // Dark theming arrives as host CSS variables, not a color-scheme switch;
+    // mirror the appearance so system colors (Canvas/CanvasText, form
+    // controls, scrollbars) follow the theme too.
+    const applyColorScheme = (theme) => {
+      document.documentElement.style.colorScheme = theme?.appearance === "dark" ? "dark" : "light";
+    };
+    applyColorScheme(window.dbxPlugin?.theme);
+    document.addEventListener("dbx-plugin-env", (event) => applyColorScheme(event.detail?.theme));
     return unsubscribe;
   });
 
@@ -603,8 +739,19 @@
 <main>
   <div class="toolbar">
     <div class="path-group">
+      <Button variant="outline" size="icon-sm" aria-pressed={treeVisible} aria-label={text.folderTree} title={text.folderTree} onclick={() => (treeVisible = !treeVisible)}><ListTree size={14} /></Button>
       <Button variant="outline" size="icon-sm" aria-label={text.up} title={text.up} disabled={!parentUri() || loading} onclick={() => load(parentUri())}><ArrowUp size={14} /></Button>
-      <input aria-label={text.path} bind:value={currentUri} onkeydown={(event) => event.key === "Enter" && load(currentUri)} />
+      {#if pathEditing}
+        <input aria-label={text.path} bind:value={currentUri} onkeydown={(event) => { if (event.key === "Enter") { pathEditing = false; load(currentUri); } }} />
+      {:else}
+        <nav class="breadcrumbs" aria-label={text.path}>
+          {#each breadcrumbs as crumb, index (crumb.uri)}
+            {#if index > 0}<span class="crumb-sep" aria-hidden="true"><ChevronRight size={12} /></span>{/if}
+            <button type="button" class="crumb" class:current={index === breadcrumbs.length - 1} onclick={() => { pathEditing = false; load(crumb.uri); }}>{crumb.name}</button>
+          {/each}
+        </nav>
+      {/if}
+      <Button variant="ghost" size="icon-sm" class="path-edit" aria-label={text.editPath} title={text.editPath} onclick={() => (pathEditing = !pathEditing)}><Pencil size={13} /></Button>
     </div>
     <div class="toolbar-actions">
       <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
@@ -617,7 +764,11 @@
   </div>
   {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span></div>{/if}
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
-  <section class="split" style={`grid-template-columns: minmax(240px, ${leftWidth}%) 2px minmax(280px, 1fr)`}>
+  <section class="split" style={`grid-template-columns: ${treeVisible ? `${treeWidth}px 6px minmax(220px, ${leftWidth}fr) 6px minmax(280px, ${100 - leftWidth}fr)` : `minmax(240px, ${leftWidth}%) 6px minmax(280px, 1fr)`}`}>
+    {#if treeVisible}
+      <div class="tree-panel"><FolderTree nodes={treeNodes} currentUri={currentUri} {text} rootLabel={text.rootLabel} onToggle={toggleTreeNode} onSelect={selectTreeNode} onLoadMore={continueTrees} /></div>
+      <button class="tree-splitter" aria-label="Resize tree" onpointerdown={startTreeResize}></button>
+    {/if}
     <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
     <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onSheetChange={(value) => (preview = value)} />
@@ -675,6 +826,18 @@
   .path-group { min-width: 0; flex: 1; padding: 2px; border: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 5px; background: color-mix(in srgb, CanvasText 2%, transparent); }
   .toolbar input { min-width: 0; flex: 1; height: 30px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 4px; padding: 6px 9px; color: inherit; background: color-mix(in srgb, CanvasText 4%, transparent); font: 12px ui-monospace, monospace; outline: none; }
   .toolbar input:focus { border-color: var(--color-primary, #6d5dfc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #6d5dfc) 18%, transparent); }
+  .breadcrumbs { display: flex; flex: 1; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+  .breadcrumbs::-webkit-scrollbar { display: none; }
+  .crumb { flex: 0 0 auto; max-width: 220px; padding: 4px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); border: 0; border-radius: 5px; background: transparent; font: 12px ui-monospace, monospace; cursor: pointer; }
+  .crumb:hover { color: var(--color-foreground, CanvasText); background: color-mix(in srgb, CanvasText 6%, transparent); }
+  .crumb.current { color: var(--color-foreground, CanvasText); font-weight: 600; background: color-mix(in srgb, CanvasText 5%, transparent); }
+  .crumb-sep { display: grid; flex: 0 0 auto; place-items: center; color: color-mix(in srgb, CanvasText 30%, transparent); }
+  .path-edit { flex: 0 0 auto; }
+  .tree-panel { min-height: 0; min-width: 0; overflow: hidden; background: var(--color-background, Canvas); }
+  .tree-splitter { position: relative; width: 6px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: col-resize; }
+  .tree-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - 0.5px); width: 1px; background: var(--color-border, color-mix(in srgb, CanvasText 11%, transparent)); }
+  .tree-splitter:hover { background: color-mix(in srgb, var(--color-primary, #6d5dfc) 22%, transparent); }
+  .tree-splitter:hover::after { background: var(--color-primary, #6d5dfc); }
   .error { margin: 8px 0; padding: 10px; border: 1px solid #d44a4a66; border-radius: 8px; color: #d44a4a; font-size: 12px; }
   .transfer { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 12px; border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 8px; font-size: 12px; }
   .transfer-label { min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -682,7 +845,10 @@
   .transfer-fill { height: 100%; border-radius: 3px; background: var(--color-primary, #6d5dfc); transition: width 150ms ease; }
   .transfer-percent { flex: 0 0 auto; min-width: 34px; text-align: right; color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-variant-numeric: tabular-nums; }
   .split { display: grid; min-height: 0; flex: 1; overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 6px; box-shadow: 0 1px 3px color-mix(in srgb, CanvasText 7%, transparent); }
-  .splitter { width: 2px; height: 100%; padding: 0; border-radius: 0; background: color-mix(in srgb, CanvasText 11%, transparent); cursor: col-resize; }.splitter:hover { background: var(--color-primary, #6d5dfc); }
+  .splitter { position: relative; width: 6px; height: 100%; padding: 0; border-radius: 0; background: transparent; cursor: col-resize; }
+  .splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - 0.5px); width: 1px; background: var(--color-border, color-mix(in srgb, CanvasText 11%, transparent)); }
+  .splitter:hover { background: color-mix(in srgb, var(--color-primary, #6d5dfc) 22%, transparent); }
+  .splitter:hover::after { background: var(--color-primary, #6d5dfc); }
   :global(html), :global(body), :global(#app) { height: 100%; overflow: hidden; }
   :global(body) { min-width: 0; color: var(--color-foreground, CanvasText); background: var(--color-background, Canvas); }
   main { height: 100%; min-height: 0; gap: 8px; padding: 10px 12px; background: var(--color-background, Canvas); }
@@ -690,8 +856,6 @@
   .path-group { border-color: var(--color-border, color-mix(in srgb, CanvasText 10%, transparent)); background: var(--color-background, Canvas); }
   .toolbar input { border-color: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); background: var(--color-background, Canvas); }
   .split { border-color: var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 6px; background: var(--color-background, Canvas); }
-  .splitter { width: 2px; background: var(--color-border, color-mix(in srgb, CanvasText 11%, transparent)); }
-  .splitter:hover { background: var(--color-primary, #6d5dfc); }
   :global(.dialog-content) { width: min(360px, calc(100% - 32px)); }
   .dialog-field { display: grid; gap: 6px; color: var(--color-foreground, CanvasText); font-size: 12px; }
   .dialog-field input, .dialog-field select, .share-url input { width: 100%; padding: 8px 10px; color: var(--color-foreground, CanvasText); border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); border-radius: var(--radius-md, 6px); outline: none; background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); font: inherit; }

@@ -10,17 +10,18 @@ import (
 )
 
 const (
-	pluginID            = "io.github.t8y2.s3"
-	pluginVersion       = "0.1.10"
-	filesystemProvider  = "io.github.t8y2.s3.files"
-	maxInlineBytes      = 4 * 1024 * 1024
-	streamChunkBytes    = 256 * 1024
-	maxStreamBytes      = 256 * 1024 * 1024
-	defaultPageSize     = 200
-	maxPageSize         = 1000
-	operationTimeout    = 30 * time.Second
-	defaultShareExpires = 24 * 60 * 60
-	maxShareExpires     = 7 * 24 * 60 * 60
+	pluginID             = "io.github.t8y2.s3"
+	pluginVersion        = "0.1.11"
+	filesystemProvider   = "io.github.t8y2.s3.files"
+	maxInlineBytes       = 4 * 1024 * 1024
+	streamChunkBytes     = 256 * 1024
+	maxStreamBytes       = 256 * 1024 * 1024
+	defaultPageSize      = 200
+	maxPageSize          = 1000
+	maxDirectoryScanKeys = 3000
+	operationTimeout     = 30 * time.Second
+	defaultShareExpires  = 24 * 60 * 60
+	maxShareExpires      = 7 * 24 * 60 * 60
 )
 
 type plugin struct {
