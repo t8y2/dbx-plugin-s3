@@ -238,6 +238,33 @@ func (plugin *plugin) createDirectory(values map[string]any) (any, *dbxpluginsdk
 	return map[string]any{"success": true, "message": "S3 directory created"}, nil
 }
 
+func (plugin *plugin) presignObject(values map[string]any) (any, *dbxpluginsdk.PluginError) {
+	context, cancel := operationContext()
+	defer cancel()
+	connection, pluginError := plugin.connectionFor(values)
+	if pluginError != nil {
+		return nil, pluginError
+	}
+	path, pluginError := parseObjectPath(stringValue(values["uri"]), connection)
+	if pluginError != nil || path.key == "" || strings.HasSuffix(path.key, "/") {
+		return nil, invalidParams("S3 share link requires a file URI")
+	}
+	expires := numberValue(values["expires"])
+	if expires <= 0 {
+		expires = defaultShareExpires
+	}
+	if expires > maxShareExpires {
+		return nil, invalidParams("S3 share link cannot be valid for more than 7 days")
+	}
+	remotePath := connection.remotePath(path)
+	// Presigning is local signing only; it never reaches the network.
+	signed, err := connection.client.PresignedGetObject(context, remotePath.bucket, remotePath.key, time.Duration(expires)*time.Second, nil)
+	if err != nil {
+		return nil, remoteError("S3 share link failed: " + err.Error())
+	}
+	return map[string]any{"url": signed.String(), "expiresIn": expires}, nil
+}
+
 func (plugin *plugin) deleteObject(values map[string]any) (any, *dbxpluginsdk.PluginError) {
 	context, cancel := operationContext()
 	defer cancel()

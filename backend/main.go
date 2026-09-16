@@ -10,15 +10,17 @@ import (
 )
 
 const (
-	pluginID           = "io.github.t8y2.s3"
-	pluginVersion      = "0.1.9"
-	filesystemProvider = "io.github.t8y2.s3.files"
-	maxInlineBytes     = 4 * 1024 * 1024
-	streamChunkBytes   = 256 * 1024
-	maxStreamBytes     = 256 * 1024 * 1024
-	defaultPageSize    = 200
-	maxPageSize        = 1000
-	operationTimeout   = 30 * time.Second
+	pluginID            = "io.github.t8y2.s3"
+	pluginVersion       = "0.1.10"
+	filesystemProvider  = "io.github.t8y2.s3.files"
+	maxInlineBytes      = 4 * 1024 * 1024
+	streamChunkBytes    = 256 * 1024
+	maxStreamBytes      = 256 * 1024 * 1024
+	defaultPageSize     = 200
+	maxPageSize         = 1000
+	operationTimeout    = 30 * time.Second
+	defaultShareExpires = 24 * 60 * 60
+	maxShareExpires     = 7 * 24 * 60 * 60
 )
 
 type plugin struct {
@@ -135,6 +137,11 @@ func (plugin *plugin) Handle(
 			return nil, pluginError
 		}
 		return plugin.deleteObject(values)
+	case "filesystem/presign":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.presignObject(values)
 	case "filesystem/rename":
 		if pluginError := requireFilesystemProvider(values); pluginError != nil {
 			return nil, pluginError

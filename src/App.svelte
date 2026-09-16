@@ -4,7 +4,7 @@
   import PreviewPane from "./components/PreviewPane.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { ArrowUp, Download, FileArchive, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { ArrowUp, Download, FileArchive, FolderOpen, FolderPlus, Link2, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
@@ -19,12 +19,14 @@
       loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.", archiveTooLarge: "ZIP downloads are limited to 220 MiB of source data.", uploading: "Uploading", downloading: "Downloading", downloadZip: "Download as ZIP", downloadZipCount: "ZIP {count} items",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
+      share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
       loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。", archiveTooLarge: "ZIP 打包的源数据不能超过 220 MiB。", uploading: "正在上传", downloading: "正在下载", downloadZip: "下载为 ZIP", downloadZipCount: "打包 {count} 项",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
+      share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
     },
   };
 
@@ -46,10 +48,20 @@
   let dialog = $state(null);
   let dialogOpen = $state(false);
   let contextMenu = $state(null);
+  let shareCopied = $state(false);
+  let shareCopyBlocked = $state(false);
+  let shareUrlInput = $state(null);
   let previewRequest = 0;
   let previewReader;
   let mammothPromise;
   let xlsxPromise;
+  let shareRequest = 0;
+
+  const shareExpiryOptions = $derived([
+    { value: 3600, label: text.shareExpiresHour },
+    { value: 86400, label: text.shareExpiresDay },
+    { value: 604800, label: text.shareExpiresWeek },
+  ]);
 
   const connectionId = () => context?.connectionId || "";
   const isZh = () => (window.dbxPlugin?.locale || "en").toLowerCase().startsWith("zh");
@@ -214,7 +226,7 @@
 
   function openContextMenu(event, entry) {
     const menuWidth = 150;
-    const menuHeight = entry.kind === "directory" || entry.kind === "bucket" ? 80 : 116;
+    const menuHeight = entry.kind === "directory" || entry.kind === "bucket" ? 80 : 152;
     contextMenu = {
       entry,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -348,6 +360,73 @@
     dialogOpen = true;
   }
 
+  function shareEntry(entry) {
+    contextMenu = null;
+    if (entry.kind === "directory" || entry.kind === "bucket") return;
+    shareCopied = false;
+    shareCopyBlocked = false;
+    dialog = { kind: "share", entry, expires: 86400, url: "", loading: true, shareError: "" };
+    dialogOpen = true;
+    void fetchShareUrl(entry, 86400);
+  }
+
+  async function fetchShareUrl(entry, expires) {
+    const requestId = ++shareRequest;
+    dialog.loading = true;
+    dialog.url = "";
+    dialog.shareError = "";
+    shareCopyBlocked = false;
+    try {
+      const result = await invoke("filesystem/presign", { uri: entry.uri, expires });
+      if (requestId !== shareRequest || dialog?.kind !== "share") return;
+      dialog.loading = false;
+      dialog.url = result?.url || "";
+    } catch (cause) {
+      if (requestId !== shareRequest || dialog?.kind !== "share") return;
+      dialog.loading = false;
+      dialog.shareError = cause?.message || text.shareFailed;
+    }
+  }
+
+  async function copyShareUrl() {
+    const value = dialog?.url;
+    if (!value) return;
+    let ok = false;
+    if (typeof window.dbxPlugin?.copy === "function") {
+      // The host bridge writes the system clipboard directly and is the only
+      // path that works inside the sandboxed workbench iframe on every host.
+      try {
+        await window.dbxPlugin.copy(value);
+        ok = true;
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      try {
+        await navigator.clipboard.writeText(value);
+        ok = true;
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      // Sandboxed workbench iframes (DBX and the dev host) deny the async
+      // clipboard API and offscreen-copy tricks, but copying the selection of
+      // a focused, visible input still reaches the system clipboard.
+      shareUrlInput?.focus();
+      shareUrlInput?.select();
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
+    }
+    shareCopied = ok;
+    shareCopyBlocked = !ok;
+    if (ok) setTimeout(() => (shareCopied = false), 2000);
+  }
+
   function handleDialogOpenChange(open) {
     dialogOpen = open;
     if (!open) dialog = null;
@@ -364,7 +443,7 @@
 
   async function confirmDialog() {
     const active = dialog;
-    if (!active) return;
+    if (!active || active.kind === "share") return;
     if (active.kind === "delete") {
       cancelDialog();
       await runOperation(async () => {
@@ -541,12 +620,12 @@
   <section class="split" style={`grid-template-columns: minmax(240px, ${leftWidth}%) 2px minmax(280px, 1fr)`}>
     <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onSheetChange={(value) => (preview = value)} />
+    <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
       {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button><button role="menuitem" onclick={() => downloadArchive([contextMenu.entry.uri])}><FileArchive size={14} />{text.downloadZip}</button>{/if}
-      {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button>{/if}
+      {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button><button role="menuitem" onclick={() => shareEntry(contextMenu.entry)}><Link2 size={14} />{text.share}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket"}<button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>{/if}
     </div>
@@ -555,16 +634,32 @@
     {#if dialog}
       <Dialog.Content showCloseButton={false} class="dialog-content">
         <Dialog.Header>
-          <Dialog.Title>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : text.newFolder}</Dialog.Title>
+          <Dialog.Title>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : text.newFolder}</Dialog.Title>
           {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>
-          {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>{/if}
+          {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>
+          {:else if dialog.kind === "share"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
         </Dialog.Header>
-        {#if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
+        {#if dialog.kind === "share"}
+          <label class="dialog-field">{text.shareExpires}
+            <select value={dialog.expires} onchange={(event) => fetchShareUrl(dialog.entry, Number(event.currentTarget.value))}>
+              {#each shareExpiryOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
+            </select>
+          </label>
+          <div class="share-url">
+            <input bind:this={shareUrlInput} readonly spellcheck="false" aria-label={text.share} value={dialog.loading ? text.loading : dialog.url} onclick={(event) => event.currentTarget.select()} onkeydown={(event) => event.key === "Enter" && copyShareUrl()} />
+            {#if dialog.shareError}<div class="share-error">{dialog.shareError}</div>{/if}
+            {#if shareCopyBlocked && dialog.url}<div class="share-hint">{text.copyBlocked}</div>{/if}
+          </div>
+        {:else if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
           <label class="dialog-field">{dialog.kind === "rename" ? text.newName : text.folderName}<input bind:value={dialog.value} onkeydown={(event) => event.key === "Enter" && confirmDialog()} /></label>
         {/if}
         <Dialog.Footer class="dialog-actions">
           <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
-          <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
+          {#if dialog.kind === "share"}
+            <Button disabled={!dialog.url} onclick={copyShareUrl}>{shareCopied ? text.copied : text.copy}</Button>
+          {:else}
+            <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
+          {/if}
         </Dialog.Footer>
       </Dialog.Content>
     {/if}
@@ -599,8 +694,13 @@
   .splitter:hover { background: var(--color-primary, #6d5dfc); }
   :global(.dialog-content) { width: min(360px, calc(100% - 32px)); }
   .dialog-field { display: grid; gap: 6px; color: var(--color-foreground, CanvasText); font-size: 12px; }
-  .dialog-field input { width: 100%; padding: 8px 10px; color: var(--color-foreground, CanvasText); border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); border-radius: var(--radius-md, 6px); outline: none; background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); font: inherit; }
-  .dialog-field input:focus { border-color: var(--color-primary, #6d5dfc); }
+  .dialog-field input, .dialog-field select, .share-url input { width: 100%; padding: 8px 10px; color: var(--color-foreground, CanvasText); border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); border-radius: var(--radius-md, 6px); outline: none; background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); font: inherit; }
+  .dialog-field select { appearance: auto; cursor: pointer; }
+  .dialog-field input:focus, .dialog-field select:focus, .share-url input:focus { border-color: var(--color-primary, #6d5dfc); }
+  .share-url { display: grid; gap: 6px; margin-top: 12px; }
+  .share-url input { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; font: 11px/1.4 ui-monospace, monospace; }
+  .share-error { color: var(--color-destructive, #dc2626); font-size: 12px; }
+  .share-hint { color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-size: 12px; }
   :global(.dialog-actions) { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .context-menu { position: fixed; z-index: 9999; min-width: 160px; width: max-content; max-width: calc(100vw - 16px); padding: 4px; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-foreground, CanvasText) 10%, transparent); border-radius: 6px; background: var(--color-popover, var(--color-background, Canvas)); color: var(--color-popover-foreground, var(--color-foreground, CanvasText)); box-shadow: 0 12px 32px color-mix(in srgb, CanvasText 18%, transparent); }
   .context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 24px; padding: 4px 8px; color: inherit; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 13px; line-height: 16px; cursor: default; }
