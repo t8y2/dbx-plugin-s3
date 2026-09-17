@@ -1,9 +1,9 @@
 <script>
   import { marked } from "marked";
-  import { Download, Link2, Pencil, Trash2 } from "@lucide/svelte";
+  import { Download, History, Link2, Pencil, Trash2 } from "@lucide/svelte";
   import { Button } from "../lib/components/ui/button/index.js";
 
-  let { selected = null, preview, text, readOnly = false, onSheetChange, onRename, onDelete, onDownload, onShare } = $props();
+  let { selected = null, preview, text, readOnly = false, onSheetChange, onRename, onDelete, onDownload, onShare, onVersions } = $props();
   const allowedMarkdownTags = new Set(["A", "BLOCKQUOTE", "BR", "CODE", "EM", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "OL", "P", "PRE", "STRONG", "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL"]);
   const displayCell = (value) => value === null || value === undefined ? "" : String(value);
 
@@ -29,6 +29,7 @@
     <div class="preview-title">
       <div class="preview-heading"><strong>{selected.name}</strong><small>{preview.type}{preview.truncated ? ` · ${text.truncated}` : ""}</small></div>
       <div class="preview-actions">
+        {#if selected.kind === "file"}<Button variant="ghost" size="icon-sm" class="preview-action" title={text.versions} aria-label={text.versions} onclick={() => onVersions?.(selected)}><History size={13} /></Button>{/if}
         {#if selected.kind !== "directory" && selected.kind !== "bucket"}<Button variant="ghost" size="sm" class="preview-action" onclick={() => onDownload?.(selected)}><Download size={13} />{text.download}</Button><Button variant="ghost" size="sm" class="preview-action" onclick={() => onShare?.(selected)}><Link2 size={13} />{text.share}</Button>{/if}
         {#if selected.kind !== "bucket" && !readOnly}<Button variant="ghost" size="sm" class="preview-action" onclick={() => onRename?.(selected)}><Pencil size={13} />{text.rename}</Button>{/if}
         {#if selected.kind !== "bucket" && !readOnly}<Button variant="destructive" size="sm" class="preview-action" onclick={() => onDelete?.(selected)}><Trash2 size={13} />{text.delete}</Button>{/if}

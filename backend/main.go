@@ -118,6 +118,16 @@ func (plugin *plugin) Handle(
 			return nil, pluginError
 		}
 		return plugin.finishUpload(values)
+	case "filesystem/upload/status":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.uploadStatus(values)
+	case "filesystem/versions":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		return plugin.listVersions(values)
 	case "filesystem/upload/abort":
 		if pluginError := requireFilesystemProvider(values); pluginError != nil {
 			return nil, pluginError

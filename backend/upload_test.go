@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +28,7 @@ func newTestPluginWithUpload(t *testing.T) (*plugin, *s3Upload, *io.PipeReader) 
 		dead:      make(chan struct{}),
 		failures:  make(chan error, 1),
 		lastWrite: time.Now(),
+		size:      -1,
 	}
 	instance := &plugin{
 		connections: map[string]*s3Connection{},
@@ -118,53 +123,107 @@ func TestHandleBinaryErrorsWhenObjectReaderVanishes(t *testing.T) {
 	}
 }
 
-// Abort must free a HandleBinary sender that is blocked on a full chunk buffer
-// while the S3 side is stalled, instead of leaving it stuck forever.
-func TestAbortUnblocksBlockedBinarySender(t *testing.T) {
-	instance, upload, _ := newTestPluginWithUpload(t)
-	cancelled := make(chan struct{})
-	upload.cancel = func() { close(cancelled) }
-	// Fake a PutObject that is parked mid-part-upload: it reports on done
-	// once the upload context is canceled. The pump is intentionally not
-	// started so the chunk buffer fills deterministically.
-	go func() {
-		<-cancelled
-		err := errors.New("context canceled")
-		upload.shutdown(err)
-		upload.done <- err
-	}()
-
-	for i := 0; i < uploadChunkSlots; i++ {
+func TestFullQueueRejectsWithoutBlockingControlLoop(test *testing.T) {
+	instance, upload, _ := newTestPluginWithUpload(test)
+	for index := 0; index < uploadChunkSlots; index++ {
 		if pluginError := instance.HandleBinary(upload.channel, []byte("xx"), nil); pluginError != nil {
-			t.Fatalf("buffered chunk %d failed: %s", i, pluginError.Message)
+			test.Fatalf("buffered chunk %d failed: %s", index, pluginError.Message)
 		}
 	}
-	blocked := sendBinaryAsync(instance, upload.channel, []byte("yy"))
-	select {
-	case outcome := <-blocked:
-		t.Fatalf("sender should be blocked while the S3 side stalls, got %v", outcome)
-	case <-time.After(100 * time.Millisecond):
+	payload := make([]byte, 2+len(upload.channel)+1)
+	binary.BigEndian.PutUint16(payload, uint16(len(upload.channel)))
+	copy(payload[2:], upload.channel)
+	var input bytes.Buffer
+	for _, frame := range []struct {
+		kind    byte
+		payload []byte
+	}{
+		{1, payload},
+		{0, []byte(`{"jsonrpc":"2.0","id":42,"method":"probe","params":{}}`)},
+	} {
+		header := make([]byte, 5)
+		header[0] = frame.kind
+		binary.BigEndian.PutUint32(header[1:], uint32(len(frame.payload)))
+		input.Write(header)
+		input.Write(frame.payload)
 	}
-
-	abortDone := make(chan struct{})
+	handler := &uploadProbeHandler{plugin: instance, handled: make(chan struct{})}
+	server := dbxpluginsdk.NewServer(dbxpluginsdk.Metadata{ID: pluginID}, handler).WithTransport(dbxpluginsdk.TransportFramed).WithIO(&input, io.Discard, io.Discard)
+	finished := make(chan error, 1)
 	go func() {
-		if _, pluginError := instance.abortUpload(map[string]any{"uploadId": upload.id}); pluginError != nil {
-			t.Errorf("abortUpload failed: %s", pluginError.Message)
-		}
-		close(abortDone)
+		finished <- server.Serve()
 	}()
 	select {
 	case <-time.After(2 * time.Second):
-		t.Fatal("abortUpload did not return")
-	case <-abortDone:
+		test.Fatal("full upload queue blocked the SDK control loop")
+	case <-handler.handled:
 	}
-	select {
-	case <-time.After(2 * time.Second):
-		t.Fatal("blocked HandleBinary sender was not released by abort")
-	case outcome := <-blocked:
-		if outcome == nil {
-			t.Fatal("expected an error from the aborted upload")
+	if err := <-finished; err != nil {
+		test.Fatal(err)
+	}
+	if _, pluginError := instance.uploadStatus(map[string]any{"uploadId": upload.id}); pluginError == nil || !strings.Contains(pluginError.Message, "queue is full") {
+		test.Fatalf("expected queue overflow to remain visible: %v", pluginError)
+	}
+}
+
+type uploadProbeHandler struct {
+	*plugin
+	handled chan struct{}
+}
+
+func (handler *uploadProbeHandler) Handle(_ dbxpluginsdk.RequestContext, _ string, _ json.RawMessage, _ *dbxpluginsdk.Emitter) (any, *dbxpluginsdk.PluginError) {
+	close(handler.handled)
+	return map[string]any{"success": true}, nil
+}
+
+func TestUploadSizeValidation(test *testing.T) {
+	for _, value := range []any{-1.0, 1.5, math.NaN(), math.Inf(1), "10", float64(6 * 1024 * 1024 * 1024 * 1024)} {
+		if _, pluginError := uploadSize(map[string]any{"size": value}); pluginError == nil {
+			test.Fatalf("accepted invalid size: %v", value)
 		}
+	}
+	for _, expected := range []float64{0, 1535186640} {
+		if size, pluginError := uploadSize(map[string]any{"size": expected}); pluginError != nil || size != int64(expected) {
+			test.Fatalf("size mismatch: %d %v", size, pluginError)
+		}
+	}
+	if size, pluginError := uploadSize(nil); pluginError != nil || size != -1 {
+		test.Fatal("legacy unknown-size uploads must remain supported")
+	}
+}
+
+func TestUploadSealingAndLengthGuards(test *testing.T) {
+	instance, upload, reader := newTestPluginWithUpload(test)
+	upload.size = 3
+	startFakeObject(upload, reader, func(source io.Reader) error { _, err := io.Copy(io.Discard, source); return err })
+	if err := upload.seal(); err == nil {
+		test.Fatal("accepted a truncated upload")
+	}
+	if pluginError := instance.HandleBinary(upload.channel, []byte("four"), nil); pluginError == nil {
+		test.Fatal("accepted more than the declared size")
+	}
+	if pluginError := instance.HandleBinary(upload.channel, []byte("abc"), nil); pluginError != nil {
+		test.Fatal(pluginError)
+	}
+	if _, pluginError := instance.uploadStatus(map[string]any{"uploadId": upload.id, "seal": true}); pluginError != nil {
+		test.Fatal(pluginError)
+	}
+	if pluginError := instance.HandleBinary(upload.channel, []byte("x"), nil); pluginError == nil {
+		test.Fatal("accepted data after sealing")
+	}
+	if _, pluginError := instance.finishUpload(map[string]any{"uploadId": upload.id}); pluginError != nil {
+		test.Fatal(pluginError)
+	}
+}
+
+func TestAbortUploadStillCancelsStalledWriter(test *testing.T) {
+	instance, upload, reader := newTestPluginWithUpload(test)
+	startFakeObject(upload, reader, func(source io.Reader) error { _, err := io.Copy(io.Discard, source); return err })
+	if _, pluginError := instance.abortUpload(map[string]any{"uploadId": upload.id}); pluginError != nil {
+		test.Fatal(pluginError)
+	}
+	if pluginError := instance.HandleBinary(upload.channel, []byte("x"), nil); pluginError == nil {
+		test.Fatal("accepted bytes after abort")
 	}
 }
 

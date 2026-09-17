@@ -28,8 +28,16 @@ S3 Browser is a plugin for [DBX](https://github.com/t8y2/dbx), the open-source d
 
 - Streaming previews over the DBX plugin stream API (256 KiB chunks) — the UI never buffers an entire object in one JSON-RPC response.
 - Large uploads through the framed DBX binary channel, written as S3 multipart uploads; the inline write method stays capped at 4 MiB.
+- Uploads use the actual file size, a bounded sending window, and backend acknowledgements. Browse other folders or cancel without changing the upload destination or connection. The UI uses binary transfers above 256 KiB.
+- Upload entire folders while preserving the selected root folder, nested paths, Unicode names, and zero-byte files. Browser directory selection omits empty folders. An error stops the remaining uploads; completed files are retained.
 - ZIP downloads for folders and multi-object selections, with transfer progress.
 - Optimistic write protection with ETags.
+
+**Object versions**
+
+- Same-name uploads create a new version when bucket versioning is enabled. Unversioned buckets, suspended versioning, and unverified versioning configurations continue to reject duplicate uploads.
+- Use **Versions** in the file preview toolbar or context menu to inspect version IDs, timestamps, sizes, the latest version, and delete markers. Listings are limited to the first 1,000 versions with an explicit truncation notice; restoring or deleting historical versions is not included.
+- Duplicate uploads require permission to read bucket versioning; version history requires permission to list object versions. The plugin never enables or changes bucket versioning automatically and conservatively rejects automatic duplicate uploads when versioning exclusions are configured.
 
 **Sharing**
 
@@ -89,12 +97,15 @@ Prerequisites: Go 1.22+, Node.js 22, and pnpm.
 
 ```bash
 npm install
+npm test             # Upload paths, flow control, and cancellation
 npm run build        # build the Svelte workbench into ui/
 
 cd backend
 go test ./...
 go vet ./...
 ```
+
+`TestLocalS3UploadLifecycle` is an opt-in real S3 check restricted to an isolated local MinIO server (`127.0.0.1:port`). Set `DBX_S3_LOCAL_ENDPOINT`, `DBX_S3_LOCAL_ACCESS_KEY`, and `DBX_S3_LOCAL_SECRET_KEY`, then run `go test -run TestLocalS3UploadLifecycle -v`. It creates and cleans up a dedicated bucket. `DBX_S3_LARGE_TEST_BYTES` overrides the default approximately 36 MiB upload size.
 
 For the full loop with hot reload, run the dev host from a DBX SDK checkout:
 

@@ -4,21 +4,16 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/minio/minio-go/v7"
 	dbxpluginsdk "github.com/t8y2/dbx/plugins/sdk/go/dbx-plugin-sdk"
 )
 
-// The host dispatches binary frames on the plugin's single read loop, so
-// HandleBinary must never block indefinitely: a stalled S3 write used to wedge
-// the whole process until DBX was restarted. Chunks are handed to a pump
-// goroutine instead, and every terminal path closes `dead` so a blocked
-// sender returns promptly with an error. The buffer is deep because minio
-// only reads between part uploads; a deep queue keeps the read loop free to
-// serve JSON requests during slow transfers.
+const uploadChunkBytes = 1024 * 1024
+
 var (
 	uploadChunkSlots   = 32
 	uploadIdleTimeout  = 10 * time.Minute
@@ -40,6 +35,13 @@ type s3Upload struct {
 	failures   chan error
 	lastWrite  time.Time
 	writeMutex sync.Mutex
+	received   int64
+	processed  int64
+	size       int64
+	sealed     bool
+	err        error
+	versionID  string
+	expiry     *time.Timer
 }
 
 func (upload *s3Upload) markWrite() {
@@ -52,6 +54,9 @@ func (upload *s3Upload) markWrite() {
 // unblocks a pump Write that is stuck because PutObject stopped reading.
 func (upload *s3Upload) shutdown(cause error) {
 	upload.deadOnce.Do(func() {
+		upload.writeMutex.Lock()
+		upload.err = cause
+		upload.writeMutex.Unlock()
 		close(upload.dead)
 		if cause != nil {
 			_ = upload.writer.CloseWithError(cause)
@@ -78,6 +83,10 @@ func (upload *s3Upload) pump() {
 				upload.shutdown(err)
 				return
 			}
+			upload.writeMutex.Lock()
+			upload.processed += int64(len(chunk))
+			upload.lastWrite = time.Now()
+			upload.writeMutex.Unlock()
 		case <-upload.dead:
 			return
 		}
@@ -96,8 +105,7 @@ func (upload *s3Upload) watchIdle() {
 			idle := time.Since(upload.lastWrite) > uploadIdleTimeout
 			upload.writeMutex.Unlock()
 			if idle {
-				// No data from the host for a while: cancel so PutObject
-				// aborts and its goroutine runs shutdown.
+				upload.shutdown(errors.New("S3 upload timed out waiting for progress"))
 				upload.cancel()
 				return
 			}
@@ -105,10 +113,47 @@ func (upload *s3Upload) watchIdle() {
 	}
 }
 
+func uploadSize(values map[string]any) (int64, *dbxpluginsdk.PluginError) {
+	value, supplied := values["size"]
+	if !supplied {
+		return -1, nil
+	}
+	size, valid := value.(float64)
+	if !valid || math.IsNaN(size) || math.IsInf(size, 0) || size < 0 || size > 5*1024*1024*1024*1024 || math.Trunc(size) != size {
+		return 0, invalidParams("Invalid S3 upload size")
+	}
+	return int64(size), nil
+}
+
+func (upload *s3Upload) Read(data []byte) (int, error) {
+	upload.markWrite()
+	return len(data), nil
+}
+
+func (upload *s3Upload) seal() error {
+	upload.writeMutex.Lock()
+	defer upload.writeMutex.Unlock()
+	if upload.err != nil {
+		return upload.err
+	}
+	if upload.size >= 0 && upload.received != upload.size {
+		return errors.New("S3 upload size does not match the received bytes")
+	}
+	if !upload.sealed {
+		upload.sealed = true
+		close(upload.chunks)
+	}
+	return nil
+}
+
 func (plugin *plugin) openUpload(values map[string]any) (any, *dbxpluginsdk.PluginError) {
 	uploadID := stringValue(values["uploadId"])
 	if !validStreamID(uploadID) {
 		return nil, invalidParams("Invalid S3 upload id")
+	}
+	size, pluginError := uploadSize(values)
+	if pluginError != nil {
+		return nil, pluginError
 	}
 	connection, pluginError := plugin.connectionFor(values)
 	if pluginError != nil {
@@ -122,18 +167,14 @@ func (plugin *plugin) openUpload(values map[string]any) (any, *dbxpluginsdk.Plug
 		return nil, invalidParams("S3 upload requires a file URI")
 	}
 	existsContext, existsCancel := operationContext()
-	exists := objectExists(existsContext, connection, path)
+	options, pluginError := writeOptions(existsContext, connection, path, values)
 	existsCancel()
-	if exists && !boolValue(values["overwrite"]) {
-		return nil, remoteError("S3 object already exists: " + path.key)
-	}
-	if !exists && !boolValue(values["create"]) {
-		return nil, remoteError("S3 object does not exist: " + path.key)
+	if pluginError != nil {
+		return nil, pluginError
 	}
 	remotePath := connection.remotePath(path)
-	contentType := stringValue(values["contentType"])
-	if contentType == "" {
-		contentType = "application/octet-stream"
+	if size == -1 {
+		options.PartSize = 16 * 1024 * 1024
 	}
 	// A fixed deadline kills slow-but-healthy transfers; the idle watchdog
 	// above covers abandoned uploads instead.
@@ -151,7 +192,9 @@ func (plugin *plugin) openUpload(values map[string]any) (any, *dbxpluginsdk.Plug
 		dead:         make(chan struct{}),
 		failures:     make(chan error, 1),
 		lastWrite:    time.Now(),
+		size:         size,
 	}
+	options.Progress = upload
 	plugin.mutex.Lock()
 	if plugin.uploads == nil {
 		plugin.uploads = make(map[string]*s3Upload)
@@ -165,14 +208,28 @@ func (plugin *plugin) openUpload(values map[string]any) (any, *dbxpluginsdk.Plug
 	plugin.uploads[uploadID] = upload
 	plugin.mutex.Unlock()
 	go func() {
-		_, err := connection.client.PutObject(context, remotePath.bucket, remotePath.key, reader, -1, minio.PutObjectOptions{ContentType: contentType})
+		info, err := upload.putObject(context, connection.client, remotePath, reader, size, options)
+		upload.writeMutex.Lock()
+		upload.versionID = info.VersionID
+		upload.writeMutex.Unlock()
 		upload.shutdown(err)
+		_ = reader.Close()
 		upload.done <- err
-		plugin.removeUpload(upload.id)
+		plugin.mutex.Lock()
+		if plugin.uploads[upload.id] == upload {
+			upload.expiry = time.AfterFunc(uploadIdleTimeout, func() {
+				plugin.mutex.Lock()
+				if plugin.uploads[upload.id] == upload {
+					delete(plugin.uploads, upload.id)
+				}
+				plugin.mutex.Unlock()
+			})
+		}
+		plugin.mutex.Unlock()
 	}()
 	go upload.pump()
 	go upload.watchIdle()
-	return map[string]any{"uploadId": uploadID, "channel": upload.channel}, nil
+	return map[string]any{"uploadId": uploadID, "channel": upload.channel, "windowBytes": 8 * uploadChunkBytes}, nil
 }
 
 func (plugin *plugin) HandleBinary(channel string, data []byte, _ *dbxpluginsdk.Emitter) *dbxpluginsdk.PluginError {
@@ -180,29 +237,61 @@ func (plugin *plugin) HandleBinary(channel string, data []byte, _ *dbxpluginsdk.
 		return invalidParams("Unknown S3 binary channel")
 	}
 	plugin.mutex.RLock()
-	var upload *s3Upload
-	for _, candidate := range plugin.uploads {
-		if candidate.channel == channel {
-			upload = candidate
-			break
-		}
-	}
+	upload := plugin.uploads[strings.TrimPrefix(channel, "s3.upload.")]
 	plugin.mutex.RUnlock()
 	if upload == nil {
 		return remoteError("S3 upload is not active")
 	}
-	upload.markWrite()
+	upload.writeMutex.Lock()
+	if upload.sealed || len(data) > uploadChunkBytes || (upload.size >= 0 && upload.received+int64(len(data)) > upload.size) {
+		upload.writeMutex.Unlock()
+		return invalidParams("Invalid S3 upload chunk or size")
+	}
 	select {
 	case <-upload.dead:
+		upload.writeMutex.Unlock()
 		return remoteError("S3 upload is not active")
 	default:
 	}
 	select {
 	case upload.chunks <- data:
+		upload.received += int64(len(data))
+		upload.lastWrite = time.Now()
+		upload.writeMutex.Unlock()
 		return nil
-	case <-upload.dead:
-		return remoteError("S3 upload is not active")
+	default:
+		upload.writeMutex.Unlock()
+		err := errors.New("S3 upload queue is full; wait for upload status before sending more data")
+		upload.shutdown(err)
+		upload.cancel()
+		return remoteError(err.Error())
 	}
+}
+
+func (plugin *plugin) uploadStatus(values map[string]any) (any, *dbxpluginsdk.PluginError) {
+	plugin.mutex.RLock()
+	upload := plugin.uploads[stringValue(values["uploadId"])]
+	plugin.mutex.RUnlock()
+	if upload == nil || upload.connectionID != stringValue(values["connectionId"]) {
+		return nil, remoteError("S3 upload is not active")
+	}
+	if boolValue(values["seal"]) {
+		if err := upload.seal(); err != nil {
+			return nil, remoteError(err.Error())
+		}
+	}
+	upload.writeMutex.Lock()
+	defer upload.writeMutex.Unlock()
+	if upload.err != nil {
+		return nil, remoteError("S3 upload failed: " + upload.err.Error())
+	}
+	complete := false
+	select {
+	case <-upload.dead:
+		complete = true
+	default:
+	}
+	return map[string]any{"received": upload.received, "processed": upload.processed, "complete": complete}, nil
 }
 
 func (plugin *plugin) finishUpload(values map[string]any) (any, *dbxpluginsdk.PluginError) {
@@ -211,7 +300,10 @@ func (plugin *plugin) finishUpload(values map[string]any) (any, *dbxpluginsdk.Pl
 	if upload == nil {
 		return nil, remoteError("S3 upload is not active")
 	}
-	close(upload.chunks)
+	if err := upload.seal(); err != nil {
+		upload.shutdown(err)
+		upload.cancel()
+	}
 	<-upload.pumpDone
 	putErr := <-upload.done
 	upload.cancel()
@@ -226,7 +318,12 @@ func (plugin *plugin) finishUpload(values map[string]any) (any, *dbxpluginsdk.Pl
 	if putErr != nil {
 		return nil, remoteError("S3 upload failed: " + putErr.Error())
 	}
-	return map[string]any{"success": true, "message": "S3 object uploaded"}, nil
+	upload.writeMutex.Lock()
+	defer upload.writeMutex.Unlock()
+	if upload.err != nil {
+		return nil, remoteError("S3 upload failed: " + upload.err.Error())
+	}
+	return map[string]any{"success": true, "message": "S3 object uploaded", "versionId": upload.versionID}, nil
 }
 
 func (plugin *plugin) abortUpload(values map[string]any) (any, *dbxpluginsdk.PluginError) {
@@ -243,6 +340,9 @@ func (plugin *plugin) removeUpload(uploadID string) *s3Upload {
 	plugin.mutex.Lock()
 	upload := plugin.uploads[uploadID]
 	delete(plugin.uploads, uploadID)
+	if upload != nil && upload.expiry != nil {
+		upload.expiry.Stop()
+	}
 	plugin.mutex.Unlock()
 	return upload
 }

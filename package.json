@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "test": "node --test src/lib/*.test.js",
     "build": "vite build",
     "build:watch": "vite build --watch"
   },

@@ -5,13 +5,11 @@
   import FolderTree from "./components/FolderTree.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { inlineUploadBytes, uploadFile, uploadTarget } from "./lib/uploads.js";
+  import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
-  // Base64 inflates JSON-RPC requests past the host bridge limit at a few MiB,
-  // so anything larger than this goes through the binary upload channel.
-  const inlineUploadBytes = 256 * 1024;
   const archiveExtensions = new Set(["7z", "bz2", "gz", "rar", "tar", "tgz", "zip"]);
   const textExtensions = new Set(["c", "conf", "cpp", "css", "go", "h", "html", "ini", "java", "js", "json", "jsx", "log", "py", "rs", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "xml", "yaml", "yml"]);
   const copy = {
@@ -23,6 +21,7 @@
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
       folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path", rootLabel: "S3",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
+      uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version only when bucket versioning is enabled; otherwise they are rejected.",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
@@ -32,6 +31,7 @@
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
       folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径", rootLabel: "S3",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
+      uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传仅在存储桶已启用版本管理时创建新版本，否则拒绝覆盖。",
     },
   };
 
@@ -55,6 +55,8 @@
   let treeWidth = $state(192);
   let pathEditing = $state(false);
   let uploadInput = $state(null);
+  let folderUploadInput = $state(null);
+  let uploadController;
   let dialog = $state(null);
   let dialogOpen = $state(false);
   let contextMenu = $state(null);
@@ -329,7 +331,7 @@
 
   function openContextMenu(event, entry) {
     const menuWidth = 150;
-    const menuHeight = entry.kind === "directory" || entry.kind === "bucket" ? 80 : 152;
+    const menuHeight = entry.kind === "directory" || entry.kind === "bucket" ? 80 : 184;
     contextMenu = {
       entry,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -359,7 +361,7 @@
       // on screen, never yank them back to it.
       if (currentUri === refreshUri) await load(currentUri);
     } catch (cause) {
-      error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
+      error = cause?.name === "AbortError" ? text.uploadCancelled : cause?.message || `${text.operationFailed}: ${String(cause)}`;
     } finally {
       operating = false;
       transfer = null;
@@ -384,42 +386,56 @@
     const input = event.currentTarget;
     const files = [...(input.files || [])];
     input.value = "";
-    if (!files.length) return;
+    if (!files.length || readOnly || operating) return;
     // Pin the target folder up front: a multi-file upload runs for a while
     // and later files must land next to the first, not in whatever folder
     // the user is browsing by then.
     const uploadUri = currentUri;
+    const uploadConnection = connectionId();
+    const uploadInvoke = (method, params, options) => window.dbxPlugin.invoke(method, { ...params, connectionId: uploadConnection, providerId }, options);
     const canStream = typeof window.dbxPlugin?.sendBinary === "function";
     await runOperation(async () => {
+      const controller = new AbortController();
+      uploadController = controller;
       const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
       transfer = { kind: "upload", name: "", sent: 0, total: totalBytes, fileIndex: 0, fileCount: files.length };
       let completedBytes = 0;
-      for (const file of files) {
-        transfer.fileIndex += 1;
-        transfer.name = file.name;
-        transfer.sent = completedBytes;
-        if (file.size > 4 * 1024 * 1024 && !canStream) throw new Error(text.uploadLargeUnavailable);
-        if (canStream && file.size > inlineUploadBytes) {
-          const uploadId = globalThis.crypto?.randomUUID?.() || `upload-${Date.now()}`;
-          const opened = await invoke("filesystem/upload/open", { uploadId, uri: childUri(uploadUri, file.name), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
-          try {
-            for (let offset = 0; offset < file.size; offset += 1024 * 1024) {
-              await window.dbxPlugin.sendBinary(opened.channel, await file.slice(offset, offset + 1024 * 1024).arrayBuffer());
-              transfer.sent = Math.min(totalBytes, completedBytes + Math.min(offset + 1024 * 1024, file.size));
-            }
-            await invoke("filesystem/upload/finish", { uploadId }, { timeoutMs: 120000 });
-          } catch (cause) {
-            await invoke("filesystem/upload/abort", { uploadId }, { timeoutMs: 120000 }).catch(() => undefined);
-            throw cause;
-          }
-        } else {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          await invoke("filesystem/write", { uri: childUri(uploadUri, file.name), dataBase64: window.dbxPlugin.encodeBase64(bytes), contentType: file.type || "application/octet-stream", create: true, overwrite: false }, { timeoutMs: 120000 });
+      try {
+        for (const file of files) {
+          transfer.fileIndex += 1;
+          transfer.name = file.webkitRelativePath || file.name;
+          transfer.sent = completedBytes;
+          if (file.size > inlineUploadBytes && !canStream) throw new Error(text.uploadLargeUnavailable);
+          await uploadFile(file, {
+            uri: uploadTarget(uploadUri, file), invoke: uploadInvoke,
+            sendBinary: (channel, bytes) => window.dbxPlugin.sendBinary(channel, bytes),
+            encodeBase64: (bytes) => window.dbxPlugin.encodeBase64(bytes), signal: controller.signal,
+            onProgress: (processed, confirming) => { transfer.sent = completedBytes + processed; transfer.confirming = confirming; },
+          });
+          completedBytes += file.size;
+          transfer.sent = completedBytes;
         }
-        completedBytes += file.size;
-        transfer.sent = completedBytes;
+      } finally {
+        uploadController = undefined;
       }
     }, uploadUri);
+  }
+
+  async function showVersions(entry) {
+    contextMenu = null;
+    dialog = { kind: "versions", entry, loading: true, versions: [], error: "" };
+    dialogOpen = true;
+    const currentDialog = dialog;
+    try {
+      const result = await invoke("filesystem/versions", { uri: entry.uri });
+      if (dialog !== currentDialog) return;
+      dialog.versions = result.versions;
+      dialog.truncated = result.truncated;
+    } catch (cause) {
+      if (dialog === currentDialog) dialog.error = cause?.message || text.operationFailed;
+    } finally {
+      if (dialog === currentDialog) dialog.loading = false;
+    }
   }
 
   function toggleCheck(entry) {
@@ -551,7 +567,7 @@
 
   async function confirmDialog() {
     const active = dialog;
-    if (!active || active.kind === "share") return;
+    if (!active || active.kind === "share" || active.kind === "versions") return;
     if (active.kind === "delete") {
       cancelDialog();
       await runOperation(async () => {
@@ -733,7 +749,7 @@
     return unsubscribe;
   });
 
-  onDestroy(releasePreviewUrl);
+  onDestroy(() => { uploadController?.abort(); releasePreviewUrl(); });
 </script>
 
 <svelte:window onclick={closeContextMenu} oncontextmenu={(event) => event.preventDefault()} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />
@@ -761,13 +777,15 @@
       {#if readOnly}<span class="readonly-badge" role="status" title={text.readOnlyTitle}><Lock size={12} />{text.readOnlyMode}</span>{/if}
       <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
       <Button variant="outline" size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : undefined} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
-      <Button size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : undefined} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
+      <Button variant="outline" size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : text.folderUploadHint} onclick={() => folderUploadInput?.click()}><FolderUp size={14} />{text.uploadFolder}</Button>
+      <Button size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : text.versionUploadHint} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
       {#if checkedUris.length}<Button variant="outline" size="sm" disabled={loading || operating} title={text.downloadZipCount.replace("{count}", checkedUris.length)} onclick={() => downloadArchive(checkedUris)}><FileArchive size={14} />{text.downloadZipCount.replace("{count}", checkedUris.length)}</Button>{/if}
       {#if checkedUris.length && !readOnly}<Button variant="destructive" size="sm" disabled={loading || operating} onclick={deleteChecked}><Trash2 size={14} />{text.deleteCount.replace("{count}", checkedUris.length)}</Button>{/if}
     </div>
     <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
+    <input bind:this={folderUploadInput} hidden type="file" multiple webkitdirectory onchange={uploadFiles} />
   </div>
-  {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span></div>{/if}
+  {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.confirming ? text.confirmingUpload : transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span>{#if transfer.kind === "upload"}<Button variant="ghost" size="sm" onclick={() => uploadController?.abort()}>{text.cancel}</Button>{/if}</div>{/if}
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
   <section class="split" style={`grid-template-columns: ${treeVisible ? `${treeWidth}px 6px minmax(220px, ${leftWidth}fr) 6px minmax(280px, ${100 - leftWidth}fr)` : `minmax(240px, ${leftWidth}%) 6px minmax(280px, 1fr)`}`}>
     {#if treeVisible}
@@ -776,10 +794,11 @@
     {/if}
     <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onSheetChange={(value) => (preview = value)} />
+    <PreviewPane {selected} {preview} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
+      {#if contextMenu.entry.kind === "file"}<button role="menuitem" onclick={() => showVersions(contextMenu.entry)}><History size={14} />{text.versions}</button>{/if}
       {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button><button role="menuitem" onclick={() => downloadArchive([contextMenu.entry.uri])}><FileArchive size={14} />{text.downloadZip}</button>{/if}
       {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button><button role="menuitem" onclick={() => shareEntry(contextMenu.entry)}><Link2 size={14} />{text.share}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket" && !readOnly}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
@@ -788,12 +807,12 @@
   {/if}
   <Dialog.Root bind:open={dialogOpen} onOpenChange={handleDialogOpenChange}>
     {#if dialog}
-      <Dialog.Content showCloseButton={false} class="dialog-content">
+      <Dialog.Content showCloseButton={false} class={`dialog-content${dialog.kind === "versions" ? " versions-dialog" : ""}`}>
         <Dialog.Header>
-          <Dialog.Title>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : text.newFolder}</Dialog.Title>
+          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : text.newFolder}</Dialog.Title>
           {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>
           {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>
-          {:else if dialog.kind === "share"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
+          {:else if dialog.kind === "share" || dialog.kind === "versions"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
         </Dialog.Header>
         {#if dialog.kind === "share"}
           <label class="dialog-field">{text.shareExpires}
@@ -806,6 +825,16 @@
             {#if dialog.shareError}<div class="share-error">{dialog.shareError}</div>{/if}
             {#if shareCopyBlocked && dialog.url}<div class="share-hint">{text.copyBlocked}</div>{/if}
           </div>
+        {:else if dialog.kind === "versions"}
+          <div class="versions-list">
+            {#if dialog.loading}<p>{text.loading}</p>
+            {:else if dialog.error}<p class="share-error">{dialog.error}</p>
+            {:else if !dialog.versions.length}<p>{text.noVersions}</p>
+            {:else}{#each dialog.versions as version}
+              <div class="version-row"><code>{version.versionId || "null"}</code><div class="version-meta"><time>{new Date(version.modified).toLocaleString()}</time><span>{version.size.toLocaleString()} B</span>{#if version.isLatest}<strong>{text.latestVersion}</strong>{/if}{#if version.deleteMarker}<strong>{text.deletedVersion}</strong>{/if}</div></div>
+            {/each}{/if}
+          </div>
+          {#if dialog.truncated}<p class="share-hint">{text.versionsTruncated}</p>{/if}
         {:else if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
           <label class="dialog-field">{dialog.kind === "rename" ? text.newName : text.folderName}<input bind:value={dialog.value} onkeydown={(event) => event.key === "Enter" && confirmDialog()} /></label>
         {/if}
@@ -813,7 +842,7 @@
           <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
           {#if dialog.kind === "share"}
             <Button disabled={!dialog.url} onclick={copyShareUrl}>{shareCopied ? text.copied : text.copy}</Button>
-          {:else}
+          {:else if dialog.kind !== "versions"}
             <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
           {/if}
         </Dialog.Footer>
@@ -863,6 +892,12 @@
   .toolbar input { border-color: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); background: var(--color-background, Canvas); }
   .split { border-color: var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 6px; background: var(--color-background, Canvas); }
   :global(.dialog-content) { width: min(360px, calc(100% - 32px)); }
+  :global(.versions-dialog) { width: min(640px, calc(100% - 32px)); max-width: min(640px, calc(100% - 32px)); height: fit-content; }
+  .versions-list { max-height: 50vh; overflow: auto; font-size: 12px; }
+  .version-row { padding: 12px 0; border-bottom: 1px solid var(--color-border, #8884); }
+  .version-row code { display: block; overflow-wrap: anywhere; user-select: text; }
+  .version-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; color: var(--color-muted-foreground, #888); font-size: 11px; }
+  .version-meta strong { color: var(--color-primary, #6d5dfc); font-weight: 500; }
   .dialog-field { display: grid; gap: 6px; color: var(--color-foreground, CanvasText); font-size: 12px; }
   .dialog-field input, .dialog-field select, .share-url input { width: 100%; padding: 8px 10px; color: var(--color-foreground, CanvasText); border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); border-radius: var(--radius-md, 6px); outline: none; background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); font: inherit; }
   .dialog-field select { appearance: auto; cursor: pointer; }

@@ -12,12 +12,12 @@ import (
 )
 
 type s3Connection struct {
-	client    *minio.Client
-	bucket    string
-	region    string
-	endpoint  string
-	basePath  string
-	readOnly  bool
+	client   *minio.Client
+	bucket   string
+	region   string
+	endpoint string
+	basePath string
+	readOnly bool
 }
 
 type connectionConfig struct {
@@ -249,7 +249,10 @@ func (plugin *plugin) disconnect(connectionID string) (any, *dbxpluginsdk.Plugin
 		_ = stream.reader.Close()
 	}
 	for _, upload := range uploads {
-		_ = upload.writer.CloseWithError(errors.New("S3 connection disconnected"))
+		upload.shutdown(errors.New("S3 connection disconnected"))
+		if upload.expiry != nil {
+			upload.expiry.Stop()
+		}
 		upload.cancel()
 		<-upload.done
 	}

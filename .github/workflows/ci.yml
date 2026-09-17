@@ -50,4 +50,4 @@ jobs:
       - name: Install DBX plugin CLI
         run: npm install --global @dbx-app/plugin-cli@0.1.6
       - name: Package Linux candidate
-        run: npm install && npm run build && dbx-plugin package . --target linux-x64
+        run: npm install && npm test && npm run build && dbx-plugin package . --target linux-x64

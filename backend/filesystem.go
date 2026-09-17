@@ -202,39 +202,16 @@ func (plugin *plugin) writeObject(values map[string]any) (any, *dbxpluginsdk.Plu
 	if err != nil || len(data) > maxInlineBytes {
 		return nil, invalidParams("S3 inline writes must contain valid base64 data up to 4 MiB")
 	}
-	etag := stringValue(values["etag"])
-	exists := objectExists(context, connection, path)
-	if etag != "" {
-		remotePath := connection.remotePath(path)
-		metadata, statErr := connection.client.StatObject(context, remotePath.bucket, remotePath.key, minio.StatObjectOptions{})
-		if statErr != nil || metadata.ETag != etag {
-			return nil, remoteError("S3 object changed before write")
-		}
-	}
-	overwrite := boolValue(values["overwrite"])
-	create := boolValue(values["create"])
-	if exists && !overwrite {
-		return nil, remoteError("S3 object already exists: " + path.key)
-	}
-	if !exists && !create {
-		return nil, remoteError("S3 object does not exist: " + path.key)
-	}
-	contentType := stringValue(values["contentType"])
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	options := minio.PutObjectOptions{ContentType: contentType}
-	if etag != "" {
-		options.SetMatchETag(etag)
-	} else if create && !overwrite {
-		options.SetMatchETagExcept("*")
+	options, pluginError := writeOptions(context, connection, path, values)
+	if pluginError != nil {
+		return nil, pluginError
 	}
 	remotePath := connection.remotePath(path)
-	_, err = connection.client.PutObject(context, remotePath.bucket, remotePath.key, bytes.NewReader(data), int64(len(data)), options)
+	info, err := connection.client.PutObject(context, remotePath.bucket, remotePath.key, bytes.NewReader(data), int64(len(data)), options)
 	if err != nil {
 		return nil, remoteError("S3 write failed: " + err.Error())
 	}
-	return map[string]any{"success": true, "message": "S3 object written"}, nil
+	return map[string]any{"success": true, "message": "S3 object written", "versionId": info.VersionID}, nil
 }
 
 func (plugin *plugin) createDirectory(values map[string]any) (any, *dbxpluginsdk.PluginError) {
