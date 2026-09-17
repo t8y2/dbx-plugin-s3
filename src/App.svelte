@@ -5,7 +5,7 @@
   import FolderTree from "./components/FolderTree.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, Link2, ListTree, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
@@ -22,6 +22,7 @@
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
       folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path", rootLabel: "S3",
+      readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
     },
     zh: {
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
@@ -30,6 +31,7 @@
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
       folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径", rootLabel: "S3",
+      readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
     },
   };
 
@@ -39,6 +41,7 @@
   let currentUri = $state("s3:/");
   let nextCursor = $state("");
   let bucketMode = $state(false);
+  let readOnly = $state(false);
   let selected = $state(null);
   let preview = $state({ kind: "empty", value: "", type: "", truncated: false });
   let loading = $state(false);
@@ -245,6 +248,7 @@
       nextCursor = result?.nextCursor || "";
       if (!append) {
         bucketMode = !!result?.bucketMode;
+        readOnly = !!result?.readOnly;
         checkedUris = [];
         clearPreview();
         void expandTreePath(uri);
@@ -754,11 +758,12 @@
       <Button variant="ghost" size="icon-sm" class="path-edit" aria-label={text.editPath} title={text.editPath} onclick={() => (pathEditing = !pathEditing)}><Pencil size={13} /></Button>
     </div>
     <div class="toolbar-actions">
+      {#if readOnly}<span class="readonly-badge" role="status" title={text.readOnlyTitle}><Lock size={12} />{text.readOnlyMode}</span>{/if}
       <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
-      <Button variant="outline" size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
-      <Button size="sm" disabled={loading || operating || (bucketMode && currentUri === "s3:/")} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
+      <Button variant="outline" size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : undefined} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
+      <Button size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : undefined} onclick={beginUpload}><Upload size={14} />{text.upload}</Button>
       {#if checkedUris.length}<Button variant="outline" size="sm" disabled={loading || operating} title={text.downloadZipCount.replace("{count}", checkedUris.length)} onclick={() => downloadArchive(checkedUris)}><FileArchive size={14} />{text.downloadZipCount.replace("{count}", checkedUris.length)}</Button>{/if}
-      {#if checkedUris.length}<Button variant="destructive" size="sm" disabled={loading || operating} onclick={deleteChecked}><Trash2 size={14} />{text.deleteCount.replace("{count}", checkedUris.length)}</Button>{/if}
+      {#if checkedUris.length && !readOnly}<Button variant="destructive" size="sm" disabled={loading || operating} onclick={deleteChecked}><Trash2 size={14} />{text.deleteCount.replace("{count}", checkedUris.length)}</Button>{/if}
     </div>
     <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
   </div>
@@ -771,14 +776,14 @@
     {/if}
     <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} {text} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onSheetChange={(value) => (preview = value)} />
+    <PreviewPane {selected} {preview} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
       {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button><button role="menuitem" onclick={() => downloadArchive([contextMenu.entry.uri])}><FileArchive size={14} />{text.downloadZip}</button>{/if}
       {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button><button role="menuitem" onclick={() => shareEntry(contextMenu.entry)}><Link2 size={14} />{text.share}</button>{/if}
-      {#if contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
-      {#if contextMenu.entry.kind !== "bucket"}<button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>{/if}
+      {#if contextMenu.entry.kind !== "bucket" && !readOnly}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
+      {#if contextMenu.entry.kind !== "bucket" && !readOnly}<button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>{/if}
     </div>
   {/if}
   <Dialog.Root bind:open={dialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -833,6 +838,7 @@
   .crumb.current { color: var(--color-foreground, CanvasText); font-weight: 600; background: color-mix(in srgb, CanvasText 5%, transparent); }
   .crumb-sep { display: grid; flex: 0 0 auto; place-items: center; color: color-mix(in srgb, CanvasText 30%, transparent); }
   .path-edit { flex: 0 0 auto; }
+  .readonly-badge { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: 26px; padding: 0 10px; color: var(--color-destructive, #dc2626); border: 1px solid color-mix(in srgb, var(--color-destructive, #dc2626) 35%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--color-destructive, #dc2626) 8%, transparent); font-size: 12px; font-weight: 500; }
   .tree-panel { min-height: 0; min-width: 0; overflow: hidden; background: var(--color-background, Canvas); }
   .tree-splitter { position: relative; width: 6px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: col-resize; }
   .tree-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - 0.5px); width: 1px; background: var(--color-border, color-mix(in srgb, CanvasText 11%, transparent)); }

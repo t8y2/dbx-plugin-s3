@@ -114,6 +114,9 @@ func (plugin *plugin) openUpload(values map[string]any) (any, *dbxpluginsdk.Plug
 	if pluginError != nil {
 		return nil, pluginError
 	}
+	if pluginError := requireWritable(connection); pluginError != nil {
+		return nil, pluginError
+	}
 	path, pluginError := parseObjectPath(stringValue(values["uri"]), connection)
 	if pluginError != nil || path.key == "" || strings.HasSuffix(path.key, "/") {
 		return nil, invalidParams("S3 upload requires a file URI")

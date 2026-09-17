@@ -96,7 +96,7 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 	for _, object := range listedObjects[:minInt(limit, len(listedObjects))] {
 		entries = append(entries, entryFromObject(object, path.bucket))
 	}
-	result := map[string]any{"entries": entries}
+	result := map[string]any{"entries": entries, "readOnly": connection.readOnly}
 	if len(listedObjects) > limit {
 		result["nextCursor"] = encodeCursor(listedObjects[limit-1].Key)
 	} else if budgetExhausted && lastScanned != "" {
@@ -132,7 +132,7 @@ func (plugin *plugin) listBuckets(context context.Context, connection *s3Connect
 			break
 		}
 	}
-	result := map[string]any{"entries": entries, "bucketMode": true}
+	result := map[string]any{"entries": entries, "bucketMode": true, "readOnly": connection.readOnly}
 	if len(entries) == limit {
 		for _, bucket := range buckets {
 			if bucket.Name > entries[len(entries)-1].Name {
@@ -191,6 +191,9 @@ func (plugin *plugin) writeObject(values map[string]any) (any, *dbxpluginsdk.Plu
 	if pluginError != nil {
 		return nil, pluginError
 	}
+	if pluginError := requireWritable(connection); pluginError != nil {
+		return nil, pluginError
+	}
 	path, pluginError := parseObjectPath(stringValue(values["uri"]), connection)
 	if pluginError != nil || path.key == "" || strings.HasSuffix(path.key, "/") {
 		return nil, invalidParams("S3 write requires a file URI")
@@ -239,6 +242,9 @@ func (plugin *plugin) createDirectory(values map[string]any) (any, *dbxpluginsdk
 	defer cancel()
 	connection, pluginError := plugin.connectionFor(values)
 	if pluginError != nil {
+		return nil, pluginError
+	}
+	if pluginError := requireWritable(connection); pluginError != nil {
 		return nil, pluginError
 	}
 	path, pluginError := parseObjectPath(stringValue(values["uri"]), connection)
@@ -290,6 +296,9 @@ func (plugin *plugin) deleteObject(values map[string]any) (any, *dbxpluginsdk.Pl
 	if pluginError != nil {
 		return nil, pluginError
 	}
+	if pluginError := requireWritable(connection); pluginError != nil {
+		return nil, pluginError
+	}
 	path, pluginError := parseObjectPath(stringValue(values["uri"]), connection)
 	if pluginError != nil || path.key == "" {
 		return nil, invalidParams("S3 delete requires an object URI")
@@ -312,6 +321,9 @@ func (plugin *plugin) renameObject(values map[string]any) (any, *dbxpluginsdk.Pl
 	defer cancel()
 	connection, pluginError := plugin.connectionFor(values)
 	if pluginError != nil {
+		return nil, pluginError
+	}
+	if pluginError := requireWritable(connection); pluginError != nil {
 		return nil, pluginError
 	}
 	source, pluginError := parseObjectPath(stringValue(values["sourceUri"]), connection)

@@ -12,11 +12,12 @@ import (
 )
 
 type s3Connection struct {
-	client   *minio.Client
-	bucket   string
-	region   string
-	endpoint string
-	basePath string
+	client    *minio.Client
+	bucket    string
+	region    string
+	endpoint  string
+	basePath  string
+	readOnly  bool
 }
 
 type connectionConfig struct {
@@ -28,6 +29,7 @@ type connectionConfig struct {
 	endpoint     string
 	region       string
 	basePath     string
+	readOnly     bool
 	bucketLookup minio.BucketLookupType
 }
 
@@ -37,6 +39,9 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 		id:        stringValue(connection["id"]),
 		bucket:    emptyIfNull(stringValue(connection["database"])),
 		accessKey: stringValue(connection["username"]),
+		// The host marks the connection read-only in DBX and serializes the
+		// flag into the connect payload; every mutating method checks it.
+		readOnly: boolValue(connection["read_only"]) || boolValue(connection["readOnly"]),
 	}
 	secrets, _ := connection["connection_secrets"].(map[string]any)
 	result.secretKey = stringValue(secrets["secret_key"])
@@ -147,7 +152,17 @@ func createConnection(config connectionConfig) (*s3Connection, *dbxpluginsdk.Plu
 	if err != nil {
 		return nil, remoteError("Failed to create S3 client: " + err.Error())
 	}
-	return &s3Connection{client: client, bucket: config.bucket, region: config.region, endpoint: config.endpoint, basePath: config.basePath}, nil
+	return &s3Connection{client: client, bucket: config.bucket, region: config.region, endpoint: config.endpoint, basePath: config.basePath, readOnly: config.readOnly}, nil
+}
+
+// requireWritable rejects mutating methods on connections the user marked
+// read-only in DBX. The host itself does not gate plugin API calls, so the
+// sidecar is the enforcement point.
+func requireWritable(connection *s3Connection) *dbxpluginsdk.PluginError {
+	if connection.readOnly {
+		return remoteError("Connection is read-only: the connection is marked read-only in DBX, so uploads, deletes, renames, and folder creation are disabled")
+	}
+	return nil
 }
 
 func verifyConnection(config connectionConfig) *dbxpluginsdk.PluginError {
