@@ -93,12 +93,12 @@ UFile 这类服务商可以配合基础路径使用，例如把端点和 `/proje
 
 ## 开发
 
-前置条件：Go 1.22+、Node.js 22 和 pnpm。
+前置条件：Go 1.22+、Node.js 22 和 pnpm 10.27.0（版本固定在 `package.json#packageManager`）。
 
 ```bash
-npm install
-npm test             # 上传路径、发送窗口和取消逻辑
-npm run build        # 把 Svelte 工作台构建到 ui/
+pnpm install --frozen-lockfile
+pnpm test            # 上传路径、发送窗口和取消逻辑
+pnpm run build       # 把 Svelte 工作台构建到 ui/
 
 cd backend
 go test ./...
@@ -135,6 +135,10 @@ dbx-plugin package .
 2. 发布流程构建全部六个平台目标并附上产物。
 3. `dbx-store` 目录自动化会发现该 Release 并创建或更新目录 PR。
 4. 审核通过后，由 DBX Store 维护者运行受保护的签名流程并合并 PR。
+
+CI 和发布构建使用同一份 `pnpm-lock.yaml`，不会在发版时重新解析浮动依赖。普通 CI 和发布流程均配置 pnpm 下载缓存和 `backend/go.sum` 对应的 Go 模块/编译缓存；发布流程跳过本插件不需要的 Rust 环境。
+
+发布流程固定引用包含缓存优化的共享 workflow 提交，插件 CLI 保持已验证的 `0.1.6`。后续升级继续使用固定标签或提交；不要改写旧标签或临时跟随 `main`。
 
 插件仓库本身不需要插件市场自动化密钥。可选的 `.dbx-store.json` 可以携带仅用于市场的字段（图标、标签、许可证、本地化），仅在首次提交或有意识地更新市场条目时需要；日常版本更新不需要。
 
