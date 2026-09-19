@@ -6,6 +6,7 @@
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
   import { inlineUploadBytes, uploadFile, uploadTarget } from "./lib/uploads.js";
+  import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
   import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
@@ -14,6 +15,7 @@
   const textExtensions = new Set(["c", "conf", "cpp", "css", "go", "h", "html", "ini", "java", "js", "json", "jsx", "log", "py", "rs", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "xml", "yaml", "yml"]);
   const copy = {
     en: {
+      locale: "en", size: "Size", modified: "Last modified", modifiedHint: "S3 last-modified time (upload or overwrite), shown in local time.", saving: "Saving",
       title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
       loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.", archiveTooLarge: "ZIP downloads are limited to 220 MiB of source data.", uploading: "Uploading", downloading: "Downloading", downloadZip: "Download as ZIP", downloadZipCount: "ZIP {count} items",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
@@ -24,6 +26,7 @@
       uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version only when bucket versioning is enabled; otherwise they are rejected.",
     },
     zh: {
+      locale: "zh-CN", size: "大小", modified: "修改时间", modifiedHint: "S3 最后修改时间（上传或覆盖），按本地时区显示。", saving: "正在保存",
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
       loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。", archiveTooLarge: "ZIP 打包的源数据不能超过 220 MiB。", uploading: "正在上传", downloading: "正在下载", downloadZip: "下载为 ZIP", downloadZipCount: "打包 {count} 项",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
@@ -57,6 +60,7 @@
   let uploadInput = $state(null);
   let folderUploadInput = $state(null);
   let uploadController;
+  let downloadController;
   let dialog = $state(null);
   let dialogOpen = $state(false);
   let contextMenu = $state(null);
@@ -330,8 +334,9 @@
   }
 
   function openContextMenu(event, entry) {
-    const menuWidth = 150;
-    const menuHeight = entry.kind === "directory" || entry.kind === "bucket" ? 80 : 184;
+    if (operating) return;
+    const menuWidth = 180;
+    const menuHeight = 184;
     contextMenu = {
       entry,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -374,11 +379,13 @@
   }
 
   async function createFolder() {
+    contextMenu = null;
     dialog = { kind: "create-folder", value: "" };
     dialogOpen = true;
   }
 
   function beginUpload() {
+    contextMenu = null;
     uploadInput?.click();
   }
 
@@ -634,8 +641,7 @@
       // The sandboxed iframe cannot trigger downloads (WKWebView cancels blob
       // navigations), so hand the bytes to the host's native save dialog.
       // A null result means the user dismissed the dialog; stay quiet.
-      await window.dbxPlugin.saveFile({ fileName, contentType }, bytes);
-      return;
+      return window.dbxPlugin.saveFile({ fileName, contentType }, bytes);
     }
     const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
     const anchor = document.createElement("a");
@@ -643,47 +649,55 @@
     anchor.download = fileName;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
+    return { path: fileName };
   }
 
   async function downloadEntry(entry) {
     contextMenu = null;
-    if (entry.kind === "directory" || entry.kind === "bucket") return;
-    operating = true;
-    error = "";
-    transfer = { kind: "download", name: entry.name, sent: 0, total: Number.isFinite(entry.size) ? entry.size : 0 };
-    try {
-      if (typeof window.dbxPlugin?.stream !== "function") throw new Error(text.downloadUnavailable);
-      const opened = await window.dbxPlugin.stream("filesystem/stream/open", { uri: entry.uri, maxBytes: 256 * 1024 * 1024, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
-      transfer.total = opened.metadata?.size || transfer.total;
-      const bytes = await readStream(opened.stream.getReader(), (sent) => { transfer.sent = sent; });
-      if (opened.metadata?.truncated) throw new Error(text.downloadTooLarge);
-      await saveBytes(entry.name, normalizedType(entry, opened.metadata), bytes);
-    } catch (cause) {
-      error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
-    } finally {
-      operating = false;
-      transfer = null;
+    if (operating || entry.kind === "directory" || entry.kind === "bucket") return;
+    if (entry.size > maxDownloadBytes && !window.dbxPlugin?.capabilities?.downloadFile) {
+      error = text.downloadTooLarge;
+      return;
     }
+    await runDownload(entry.name, "filesystem/stream/open", { uri: entry.uri, maxBytes: maxDownloadBytes }, entry);
   }
 
   async function downloadArchive(uris) {
     contextMenu = null;
-    if (!uris.length) return;
-    const fileName = archiveFileName(uris);
+    if (operating || !uris.length) return;
+    await runDownload(archiveFileName(uris), "filesystem/archive/open", { uris });
+  }
+
+  async function runDownload(fileName, method, params, entry) {
+    const controller = new AbortController();
+    downloadController = controller;
     operating = true;
     error = "";
-    transfer = { kind: "archive", name: fileName, sent: 0, total: 0 };
+    transfer = { kind: entry ? "download" : "archive", name: fileName, sent: 0, total: entry?.size || 0, saving: false };
     try {
+      if (window.dbxPlugin?.capabilities?.downloadFile) {
+        const saved = await saveDownload({
+          host: window.dbxPlugin, fileName, params: { ...params, archive: !entry, connectionId: connectionId(), providerId }, signal: controller.signal,
+          onProgress: ({ sent, total }) => { transfer.sent = sent; transfer.total = total; },
+        });
+        if (!entry && saved) checkedUris = [];
+        return;
+      }
       if (typeof window.dbxPlugin?.stream !== "function") throw new Error(text.downloadUnavailable);
-      const opened = await window.dbxPlugin.stream("filesystem/archive/open", { uris, connectionId: connectionId(), providerId }, { timeoutMs: 120000 });
-      transfer.total = opened.metadata?.size || 0;
-      const bytes = await readStream(opened.stream.getReader(), (sent) => { transfer.sent = sent; });
-      if (opened.metadata?.truncated) throw new Error(text.archiveTooLarge);
-      await saveBytes(fileName, "application/zip", bytes);
-      checkedUris = [];
+      const { bytes, metadata } = await readDownload({
+        open: () => window.dbxPlugin.stream(method, { ...params, connectionId: connectionId(), providerId }, { timeoutMs: 120000 }),
+        signal: controller.signal, tooLarge: entry ? text.downloadTooLarge : text.archiveTooLarge,
+        onMetadata: (metadata) => { transfer.total = metadata.size || transfer.total; },
+        onProgress: (sent) => { transfer.sent = sent; },
+      });
+      if (controller.signal.aborted) return;
+      transfer.saving = true;
+      const saved = await saveBytes(fileName, entry ? normalizedType(entry, metadata) : "application/zip", bytes);
+      if (!entry && saved) checkedUris = [];
     } catch (cause) {
-      error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
+      if (!controller.signal.aborted) error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
     } finally {
+      downloadController = undefined;
       operating = false;
       transfer = null;
     }
@@ -749,7 +763,7 @@
     return unsubscribe;
   });
 
-  onDestroy(() => { uploadController?.abort(); releasePreviewUrl(); });
+  onDestroy(() => { uploadController?.abort(); downloadController?.abort(); releasePreviewUrl(); });
 </script>
 
 <svelte:window onclick={closeContextMenu} oncontextmenu={(event) => event.preventDefault()} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />
@@ -785,24 +799,33 @@
     <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
     <input bind:this={folderUploadInput} hidden type="file" multiple webkitdirectory onchange={uploadFiles} />
   </div>
-  {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.confirming ? text.confirmingUpload : transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span>{#if transfer.kind === "upload"}<Button variant="ghost" size="sm" onclick={() => uploadController?.abort()}>{text.cancel}</Button>{/if}</div>{/if}
+  {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.saving ? text.saving : transfer.confirming ? text.confirmingUpload : transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span><Button variant="ghost" size="sm" disabled={transfer.saving} onclick={() => (transfer.kind === "upload" ? uploadController : downloadController)?.abort()}>{text.cancel}</Button></div>{/if}
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
   <section class="split" style={`grid-template-columns: ${treeVisible ? `${treeWidth}px 6px minmax(220px, ${leftWidth}fr) 6px minmax(280px, ${100 - leftWidth}fr)` : `minmax(240px, ${leftWidth}%) 6px minmax(280px, 1fr)`}`}>
     {#if treeVisible}
       <div class="tree-panel"><FolderTree nodes={treeNodes} currentUri={currentUri} {text} rootLabel={text.rootLabel} onToggle={toggleTreeNode} onSelect={selectTreeNode} onLoadMore={continueTrees} /></div>
       <button class="tree-splitter" aria-label="Resize tree" onpointerdown={startTreeResize}></button>
     {/if}
-    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
+    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
     <PreviewPane {selected} {preview} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
+      {#if !contextMenu.entry}
+        <button role="menuitem" disabled={loading || operating} onclick={() => { contextMenu = null; load(currentUri); }}><RefreshCw size={14} />{text.refresh}</button>
+        {#if !readOnly && !(bucketMode && currentUri === "s3:/")}
+          <button role="menuitem" disabled={loading || operating} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</button>
+          <button role="menuitem" disabled={loading || operating} onclick={beginUpload}><Upload size={14} />{text.upload}</button>
+          <button role="menuitem" disabled={loading || operating} onclick={() => { contextMenu = null; folderUploadInput?.click(); }}><FolderUp size={14} />{text.uploadFolder}</button>
+        {/if}
+      {:else}
       {#if contextMenu.entry.kind === "file"}<button role="menuitem" onclick={() => showVersions(contextMenu.entry)}><History size={14} />{text.versions}</button>{/if}
       {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button><button role="menuitem" onclick={() => downloadArchive([contextMenu.entry.uri])}><FileArchive size={14} />{text.downloadZip}</button>{/if}
       {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button><button role="menuitem" onclick={() => shareEntry(contextMenu.entry)}><Link2 size={14} />{text.share}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket" && !readOnly}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket" && !readOnly}<button class="danger" role="menuitem" onclick={() => deleteEntry(contextMenu.entry)}><Trash2 size={14} />{text.delete}</button>{/if}
+      {/if}
     </div>
   {/if}
   <Dialog.Root bind:open={dialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -909,6 +932,7 @@
   :global(.dialog-actions) { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .context-menu { position: fixed; z-index: 9999; min-width: 160px; width: max-content; max-width: calc(100vw - 16px); padding: 4px; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-foreground, CanvasText) 10%, transparent); border-radius: 6px; background: var(--color-popover, var(--color-background, Canvas)); color: var(--color-popover-foreground, var(--color-foreground, CanvasText)); box-shadow: 0 12px 32px color-mix(in srgb, CanvasText 18%, transparent); }
   .context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 24px; padding: 4px 8px; color: inherit; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 13px; line-height: 16px; cursor: default; }
+  .context-menu button:disabled { opacity: .45; pointer-events: none; }
   .context-menu button:hover, .context-menu button:focus-visible { color: var(--color-accent-foreground, var(--color-foreground, CanvasText)); background: var(--color-accent, var(--color-muted, color-mix(in srgb, CanvasText 7%, transparent))); outline: none; }
   .context-menu button.danger { color: var(--color-destructive, #dc2626); }
   .context-menu button.danger:hover, .context-menu button.danger:focus-visible { color: var(--color-destructive, #dc2626); background: color-mix(in srgb, var(--color-destructive, #dc2626) 10%, transparent); }

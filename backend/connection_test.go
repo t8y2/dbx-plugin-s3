@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,114 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
+
+func TestConnectionDualstackIsOptIn(test *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		endpoint   string
+		addressing string
+		dualstack  any
+		host       string
+	}{
+		{name: "AWS default virtual", endpoint: "s3.us-west-2.amazonaws.com", addressing: "virtual", host: "example-bucket.s3.us-west-2.amazonaws.com"},
+		{name: "AWS default path", endpoint: "s3.us-west-2.amazonaws.com", addressing: "path", host: "s3.us-west-2.amazonaws.com"},
+		{name: "AWS explicit false", endpoint: "s3.us-west-2.amazonaws.com", dualstack: false, host: "example-bucket.s3.us-west-2.amazonaws.com"},
+		{name: "AWS enabled", endpoint: "s3.us-west-2.amazonaws.com", dualstack: true, host: "example-bucket.s3.dualstack.us-west-2.amazonaws.com"},
+		{name: "AWS enabled string", endpoint: "s3.us-west-2.amazonaws.com", dualstack: "true", host: "example-bucket.s3.dualstack.us-west-2.amazonaws.com"},
+		{name: "custom default", endpoint: "storage.example.com", addressing: "path", host: "storage.example.com"},
+		{name: "custom enabled", endpoint: "storage.example.com", addressing: "path", dualstack: true, host: "storage.example.com"},
+	} {
+		test.Run(testCase.name, func(test *testing.T) {
+			config, pluginError := parseConnection(map[string]any{"connection": map[string]any{
+				"id": "test", "username": "access-key", "connection_secrets": map[string]any{"secret_key": "secret-key"},
+				"external_config": map[string]any{"endpoint": testCase.endpoint, "region": "us-west-2", "addressing_style": testCase.addressing, "aws_dualstack": testCase.dualstack},
+			}})
+			if pluginError != nil {
+				test.Fatal(pluginError.Message)
+			}
+			connection, pluginError := createConnection(config)
+			if pluginError != nil {
+				test.Fatal(pluginError.Message)
+			}
+			presigned, err := connection.client.PresignedGetObject(context.Background(), "example-bucket", "report.txt", time.Hour, nil)
+			if err != nil {
+				test.Fatal(err)
+			}
+			if presigned.Host != testCase.host {
+				test.Fatalf("unexpected endpoint: got %s, want %s", presigned.Host, testCase.host)
+			}
+		})
+	}
+}
+
+type connectionTestTransport func(*http.Request) (*http.Response, error)
+
+func (transport connectionTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestConnectionVerificationDeadlinePrecedesHostTimeout(test *testing.T) {
+	for _, bucket := range []string{"", "example-bucket"} {
+		test.Run("bucket="+bucket, func(test *testing.T) {
+			requests := 0
+			client, err := minio.New("s3.us-west-2.amazonaws.com", &minio.Options{
+				Creds: credentials.NewStaticV4("access-key", "secret-key", ""), Region: "us-west-2", Secure: true, MaxRetries: 1,
+				Transport: connectionTestTransport(func(request *http.Request) (*http.Response, error) {
+					requests++
+					deadline, present := request.Context().Deadline()
+					if !present || time.Until(deadline) > 20*time.Second || time.Until(deadline) <= 0 {
+						test.Errorf("expected a positive deadline of at most 20 seconds, got %v", deadline)
+					}
+					return nil, context.DeadlineExceeded
+				}),
+			})
+			if err != nil {
+				test.Fatal(err)
+			}
+			client.SetS3EnableDualstack(false)
+			pluginError := verifyBucket(&s3Connection{client: client, bucket: bucket})
+			if requests == 0 || pluginError == nil || !strings.Contains(pluginError.Message, "s3.us-west-2.amazonaws.com") || !strings.Contains(pluginError.Message, "context deadline exceeded") {
+				test.Fatalf("expected the original endpoint and timeout error, got %v", pluginError)
+			}
+		})
+	}
+}
+
+func TestManifestDualstackDefaultsToDisabled(test *testing.T) {
+	data, err := os.ReadFile("../manifest.json")
+	if err != nil {
+		test.Fatal(err)
+	}
+	var manifest struct {
+		Contributions []struct {
+			Fields []struct {
+				Key     string `json:"key"`
+				Type    string `json:"type"`
+				Binding string `json:"binding"`
+				Default any    `json:"default"`
+			} `json:"fields"`
+		} `json:"contributions"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		test.Fatal(err)
+	}
+	for _, contribution := range manifest.Contributions {
+		for _, field := range contribution.Fields {
+			if field.Key == "aws_dualstack" {
+				if field.Type != "boolean" || field.Binding != "config" || field.Default != false {
+					test.Fatalf("unexpected dualstack field: %+v", field)
+				}
+				return
+			}
+		}
+	}
+	test.Fatal("missing dualstack field")
+}
 
 func TestManifestOptionalFieldsDefaultToEmptyString(t *testing.T) {
 	data, err := os.ReadFile("../manifest.json")

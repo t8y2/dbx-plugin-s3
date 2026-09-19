@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -30,6 +31,7 @@ type connectionConfig struct {
 	region       string
 	basePath     string
 	readOnly     bool
+	dualstack    bool
 	bucketLookup minio.BucketLookupType
 }
 
@@ -47,6 +49,7 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	result.secretKey = stringValue(secrets["secret_key"])
 	result.sessionToken = emptyIfNull(stringValue(secrets["session_token"]))
 	config, _ := connection["external_config"].(map[string]any)
+	result.dualstack = boolValue(config["aws_dualstack"]) || strings.EqualFold(strings.TrimSpace(stringValue(config["aws_dualstack"])), "true")
 	result.endpoint = stringValue(config["endpoint"])
 	result.region = strings.TrimSpace(stringValue(config["region"]))
 	if result.region == "" {
@@ -152,6 +155,7 @@ func createConnection(config connectionConfig) (*s3Connection, *dbxpluginsdk.Plu
 	if err != nil {
 		return nil, remoteError("Failed to create S3 client: " + err.Error())
 	}
+	client.SetS3EnableDualstack(config.dualstack)
 	return &s3Connection{client: client, bucket: config.bucket, region: config.region, endpoint: config.endpoint, basePath: config.basePath, readOnly: config.readOnly}, nil
 }
 
@@ -174,7 +178,7 @@ func verifyConnection(config connectionConfig) *dbxpluginsdk.PluginError {
 }
 
 func verifyBucket(connection *s3Connection) *dbxpluginsdk.PluginError {
-	context, cancel := operationContext()
+	context, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if connection.bucket == "" {
 		if _, err := connection.client.ListBuckets(context); err != nil {
@@ -227,6 +231,7 @@ func (plugin *plugin) connectionFor(values map[string]any) (*s3Connection, *dbxp
 }
 
 func (plugin *plugin) disconnect(connectionID string) (any, *dbxpluginsdk.PluginError) {
+	plugin.closeConnectionDownloads(connectionID)
 	plugin.mutex.Lock()
 	delete(plugin.connections, connectionID)
 	streams := make([]*s3Stream, 0)

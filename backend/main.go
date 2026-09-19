@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID             = "io.github.t8y2.s3"
-	pluginVersion        = "0.1.13"
+	pluginVersion        = "0.1.14"
 	filesystemProvider   = "io.github.t8y2.s3.files"
 	maxInlineBytes       = 4 * 1024 * 1024
 	streamChunkBytes     = 256 * 1024
@@ -29,6 +29,7 @@ type plugin struct {
 	connections map[string]*s3Connection
 	streams     map[string]*s3Stream
 	uploads     map[string]*s3Upload
+	downloads   map[string]*s3Download
 }
 
 func (plugin *plugin) Handle(
@@ -43,6 +44,17 @@ func (plugin *plugin) Handle(
 	}
 
 	switch method {
+	case "filesystem/download/open", "filesystem/download/read", "filesystem/download/close":
+		if pluginError := requireFilesystemProvider(values); pluginError != nil {
+			return nil, pluginError
+		}
+		if method == "filesystem/download/open" {
+			return plugin.openDownload(values)
+		}
+		if method == "filesystem/download/read" {
+			return plugin.readDownload(values)
+		}
+		return plugin.closeDownload(values)
 	case "connection/test":
 		if pluginError := requireConnectionProvider(values); pluginError != nil {
 			return nil, pluginError

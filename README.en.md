@@ -31,6 +31,9 @@ S3 Browser is a plugin for [DBX](https://github.com/t8y2/dbx), the open-source d
 - Uploads use the actual file size, a bounded sending window, and backend acknowledgements. Browse other folders or cancel without changing the upload destination or connection. The UI uses binary transfers above 256 KiB.
 - Upload entire folders while preserving the selected root folder, nested paths, Unicode names, and zero-byte files. Browser directory selection omits empty folders. An error stops the remaining uploads; completed files are retained.
 - ZIP downloads for folders and multi-object selections, with transfer progress.
+- Cancel individual or ZIP downloads. DBX desktop hosts with native streaming-download support ask for the destination first, write chunks of at most 1 MiB to a temporary file, and replace the destination only after success. Cancellation and failures preserve existing files. This path removes the legacy 256 MiB file / 220 MiB ZIP source-data limits; ZIPs still allow at most 20,000 files. Older and Web hosts retain the existing size limits and post-download save dialog.
+- Object lists show sizes and S3 last-modified (upload or overwrite) times in the local timezone. The empty-area context menu supports refresh, folder creation, and uploads.
+- AWS endpoint rewriting to dualstack is disabled by default and can be explicitly enabled in the connection form.
 - Optimistic write protection with ETags.
 
 **Object versions**

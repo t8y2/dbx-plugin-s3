@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "io.github.t8y2.s3",
   "name": "S3 Browser",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "publisher": "t8y2",
   "description": "S3-compatible object storage plugin for DBX.",
   "icon": "assets/plugin.svg",
@@ -92,6 +92,15 @@
           ]
         },
         {
+          "key": "aws_dualstack",
+          "label": "AWS dual-stack endpoints",
+          "type": "boolean",
+          "default": false,
+          "binding": "config",
+          "required": false,
+          "description": "Opt in to AWS IPv4/IPv6 dual-stack endpoints. Disabled by default to avoid rewriting standard AWS endpoints; has no effect on other S3-compatible services."
+        },
+        {
           "key": "bucket",
           "label": "Bucket",
           "type": "text",
@@ -150,6 +159,7 @@
             "region": { "label": "区域", "description": "MinIO 等 S3 兼容服务可不填，留空时默认 us-east-1。" },
             "base_path": { "label": "基础路径", "description": "映射为文件系统根的对象前缀；/ 表示整个存储桶，例如 /project/assets。" },
             "addressing_style": { "label": "寻址方式" },
+            "aws_dualstack": { "label": "AWS 双栈端点", "description": "启用 AWS IPv4/IPv6 双栈端点。默认关闭，避免将标准 AWS 端点改写为 dualstack；不影响其他 S3 兼容服务。" },
             "bucket": { "label": "存储桶", "description": "可选。留空后连接即可列出所有存储桶。" },
             "access_key": { "label": "访问密钥" },
             "secret_key": { "label": "秘密密钥" },

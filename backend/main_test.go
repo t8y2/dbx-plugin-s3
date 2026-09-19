@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 )
@@ -319,9 +320,13 @@ func TestCursorRoundTrip(t *testing.T) {
 }
 
 func TestEntryFromObject(t *testing.T) {
-	file := entryFromObject(minio.ObjectInfo{Key: "folder/file.txt", Size: 12}, "example-bucket")
+	modified := time.Date(2026, time.September, 18, 9, 54, 26, 0, time.FixedZone("UTC+8", 8*60*60))
+	file := entryFromObject(minio.ObjectInfo{Key: "folder/file.txt", Size: 12, LastModified: modified}, "example-bucket")
 	if file.Name != "file.txt" || file.Kind != "file" || file.URI != "s3://example-bucket/folder/file.txt" || file.Size == nil || *file.Size != 12 {
 		t.Fatalf("unexpected file entry: %#v", file)
+	}
+	if file.ModifiedAt != "2026-09-18T01:54:26Z" {
+		t.Fatalf("unexpected modification time: %q", file.ModifiedAt)
 	}
 	directory := entryFromObject(minio.ObjectInfo{Key: "folder/subfolder/"}, "example-bucket")
 	if directory.Name != "subfolder" || directory.Kind != "directory" || directory.Size != nil {

@@ -70,6 +70,10 @@ func (plugin *plugin) openArchive(values map[string]any, emitter *dbxpluginsdk.E
 }
 
 func planArchive(context context.Context, connection *s3Connection, requestedUris []any) ([]archiveMember, int64, *dbxpluginsdk.PluginError) {
+	return planArchiveWithLimit(context, connection, requestedUris, maxArchiveBytes)
+}
+
+func planArchiveWithLimit(context context.Context, connection *s3Connection, requestedUris []any, sizeLimit int64) ([]archiveMember, int64, *dbxpluginsdk.PluginError) {
 	members := make([]archiveMember, 0, 64)
 	totalSize := int64(0)
 	for _, requestedUri := range requestedUris {
@@ -98,7 +102,7 @@ func planArchive(context context.Context, connection *s3Connection, requestedUri
 				totalSize += member.size
 			}
 		}
-		if totalSize > maxArchiveBytes {
+		if sizeLimit > 0 && totalSize > sizeLimit {
 			return nil, 0, invalidParams("S3 archive exceeds the size limit")
 		}
 		if len(members) > maxArchiveMembers {
