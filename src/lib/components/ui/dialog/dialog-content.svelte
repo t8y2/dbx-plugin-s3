@@ -24,19 +24,22 @@
 
 <DialogPortal {...portalProps}>
 	<Dialog.Overlay />
-	<DialogPrimitive.Content
-		bind:ref
-		data-slot="dialog-content"
-		class={cn(
-			// Centering uses auto margins against pinned edges instead of the
-			// `translate` property (unsupported on WebKit < 14.1, which left the
-			// dialog's top-left corner at the viewport center, shifted down-right
-			// and cut off). Long content scrolls instead of pushing buttons out.
-			"bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 grid h-fit max-h-[calc(100vh-2rem)] overflow-y-auto max-w-[calc(100%_-_2rem)] gap-4 rounded-xl p-4 text-sm ring-1 duration-100 sm:max-w-sm fixed top-0 right-0 bottom-0 left-0 z-50 mx-auto my-auto w-full outline-none",
-			className
-		)}
-		{...restProps}
-	>
+	<!-- Centering uses a fixed flex shell plus a normally-flowed content box.
+	     The previous scheme pinned all four edges and relied on height:
+	     fit-content to keep the box content-sized — engines that do not know
+	     that value (older WebKit) drop it, stretch the box to the viewport and
+	     then distribute the extra height across every grid row. Inside the
+	     shell the content gets its natural auto height on every engine. -->
+	<div class="fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center pointer-events-none p-4">
+		<DialogPrimitive.Content
+			bind:ref
+			data-slot="dialog-content"
+			class={cn(
+				"bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 pointer-events-auto relative grid max-h-full gap-4 overflow-y-auto rounded-xl p-4 text-sm ring-1 duration-100 w-full max-w-none sm:max-w-none outline-none",
+				className
+			)}
+			{...restProps}
+		>
 		{@render children?.()}
 		{#if showCloseButton}
 			<DialogPrimitive.Close data-slot="dialog-close">
@@ -49,4 +52,5 @@
 			</DialogPrimitive.Close>
 		{/if}
 	</DialogPrimitive.Content>
+	</div>
 </DialogPortal>

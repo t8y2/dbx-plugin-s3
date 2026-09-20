@@ -245,3 +245,76 @@ func waitLocalUpload(test *testing.T, instance *plugin, params map[string]any, r
 	}
 	test.Fatal("upload did not make progress")
 }
+
+func TestLocalS3StatReportsObjectMetadata(test *testing.T) {
+	endpoint := os.Getenv("DBX_S3_LOCAL_ENDPOINT")
+	if endpoint == "" {
+		test.Skip("set DBX_S3_LOCAL_ENDPOINT to an isolated local MinIO server")
+	}
+	if !strings.HasPrefix(endpoint, "127.0.0.1:") {
+		test.Fatal("local S3 tests only accept an isolated loopback endpoint")
+	}
+	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(os.Getenv("DBX_S3_LOCAL_ACCESS_KEY"), os.Getenv("DBX_S3_LOCAL_SECRET_KEY"), ""), Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1})
+	if err != nil {
+		test.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	bucket := fmt.Sprintf("dbx-stat-test-%d", time.Now().UnixNano())
+	if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+		test.Fatal(err)
+	}
+	test.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		for object := range client.ListObjects(cleanup, bucket, minio.ListObjectsOptions{Recursive: true}) {
+			if object.Err != nil {
+				test.Error(object.Err)
+				break
+			}
+			_ = client.RemoveObject(cleanup, bucket, object.Key, minio.RemoveObjectOptions{})
+		}
+		_ = client.RemoveBucket(cleanup, bucket)
+	})
+	content := `{"name":"元数据","items":[1,2,3]}`
+	if _, err := client.PutObject(ctx, bucket, "tenant/资料/对象.json", strings.NewReader(content), int64(len(content)), minio.PutObjectOptions{ContentType: "application/json"}); err != nil {
+		test.Fatal(err)
+	}
+	connection := &s3Connection{client: client, bucket: bucket, basePath: "tenant"}
+	instance := &plugin{connections: map[string]*s3Connection{"local": connection}}
+	uri := objectURI(bucket, "资料/对象.json")
+
+	stat, pluginError := instance.statObject(map[string]any{"connectionId": "local", "uri": uri})
+	if pluginError != nil {
+		test.Fatal(pluginError)
+	}
+	fields := stat.(map[string]any)
+	if fields["size"] != int64(len(content)) {
+		test.Fatalf("stat size mismatch: %#v", fields["size"])
+	}
+	if fields["contentType"] != "application/json" {
+		test.Fatalf("stat content type mismatch: %#v", fields["contentType"])
+	}
+	if stringValue(fields["etag"]) == "" {
+		test.Fatal("stat etag missing")
+	}
+	if _, err := time.Parse(time.RFC3339, stringValue(fields["lastModified"])); err != nil {
+		test.Fatalf("stat lastModified is not RFC3339: %#v", fields["lastModified"])
+	}
+
+	read, pluginError := instance.readObject(map[string]any{"connectionId": "local", "uri": uri, "maxBytes": float64(1024)})
+	if pluginError != nil {
+		test.Fatal(pluginError)
+	}
+	readFields := read.(map[string]any)
+	if readFields["size"] != int64(len(content)) || readFields["etag"] != fields["etag"] {
+		test.Fatalf("read metadata drifted from stat: %#v", readFields)
+	}
+	if _, err := time.Parse(time.RFC3339, stringValue(readFields["lastModified"])); err != nil {
+		test.Fatalf("read lastModified is not RFC3339: %#v", readFields["lastModified"])
+	}
+
+	if _, pluginError := instance.statObject(map[string]any{"connectionId": "local", "uri": objectURI(bucket, "资料/")}); pluginError == nil {
+		test.Fatal("stat accepted a directory URI")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/minio/minio-go/v7"
@@ -71,7 +72,13 @@ func (plugin *plugin) openStream(values map[string]any, emitter *dbxpluginsdk.Em
 	plugin.streams[streamID] = stream
 	plugin.mutex.Unlock()
 	go plugin.pumpStream(stream, emitter)
-	return map[string]any{"streamId": streamID, "size": metadata.Size, "contentType": metadata.ContentType}, nil
+	return map[string]any{
+		"streamId":     streamID,
+		"size":         metadata.Size,
+		"contentType":  metadata.ContentType,
+		"etag":         metadata.ETag,
+		"lastModified": metadata.LastModified.UTC().Format(time.RFC3339),
+	}, nil
 }
 
 func (plugin *plugin) closeStream(values map[string]any) (any, *dbxpluginsdk.PluginError) {

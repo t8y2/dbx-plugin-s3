@@ -178,10 +178,36 @@ func (plugin *plugin) readObject(values map[string]any) (any, *dbxpluginsdk.Plug
 		data = data[:maxBytes]
 	}
 	return map[string]any{
-		"dataBase64":  base64.StdEncoding.EncodeToString(data),
-		"contentType": metadata.ContentType,
-		"truncated":   truncated,
-		"etag":        metadata.ETag,
+		"dataBase64":   base64.StdEncoding.EncodeToString(data),
+		"contentType":  metadata.ContentType,
+		"truncated":    truncated,
+		"etag":         metadata.ETag,
+		"size":         metadata.Size,
+		"lastModified": metadata.LastModified.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+func (plugin *plugin) statObject(values map[string]any) (any, *dbxpluginsdk.PluginError) {
+	context, cancel := operationContext()
+	defer cancel()
+	connection, pluginError := plugin.connectionFor(values)
+	if pluginError != nil {
+		return nil, pluginError
+	}
+	path, pluginError := parseObjectPath(stringValue(values["uri"]), connection)
+	if pluginError != nil || path.key == "" || strings.HasSuffix(path.key, "/") {
+		return nil, invalidParams("S3 stat requires a file URI")
+	}
+	remotePath := connection.remotePath(path)
+	metadata, err := connection.client.StatObject(context, remotePath.bucket, remotePath.key, minio.StatObjectOptions{})
+	if err != nil {
+		return nil, remoteError("S3 stat failed: " + err.Error())
+	}
+	return map[string]any{
+		"size":         metadata.Size,
+		"etag":         metadata.ETag,
+		"contentType":  metadata.ContentType,
+		"lastModified": metadata.LastModified.UTC().Format(time.RFC3339),
 	}, nil
 }
 func (plugin *plugin) writeObject(values map[string]any) (any, *dbxpluginsdk.PluginError) {

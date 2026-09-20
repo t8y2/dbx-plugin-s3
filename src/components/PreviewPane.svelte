@@ -1,11 +1,28 @@
 <script>
   import { marked } from "marked";
-  import { Download, History, Link2, Pencil, Trash2 } from "@lucide/svelte";
+  import { Download, History, Info, Link2, Pencil, Trash2 } from "@lucide/svelte";
   import { Button } from "../lib/components/ui/button/index.js";
+  import { formatObjectModified, formatObjectSize } from "../lib/object-metadata.js";
 
-  let { selected = null, preview, text, readOnly = false, onSheetChange, onRename, onDelete, onDownload, onShare, onVersions } = $props();
+  let { selected = null, preview, metadata = null, text, readOnly = false, onSheetChange, onRename, onDelete, onDownload, onShare, onVersions, onDetails } = $props();
   const allowedMarkdownTags = new Set(["A", "BLOCKQUOTE", "BR", "CODE", "EM", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "OL", "P", "PRE", "STRONG", "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL"]);
   const displayCell = (value) => value === null || value === undefined ? "" : String(value);
+
+  // The listing already carries size/type/modified; the HEAD metadata fills in
+  // the ETag and refreshes the rest when it lands.
+  const detailSize = $derived(selected?.kind === "file" ? metadata?.size ?? selected.size : undefined);
+  const detailType = $derived(metadata?.contentType || selected?.contentType || "");
+  const detailModified = $derived(metadata?.lastModified || selected?.modifiedAt || "");
+  const detailEtag = $derived(metadata?.etag || "");
+  // One muted line under the title carries the essentials (Finder-style);
+  // anything technical (ETag) lives one click deeper in the details dialog.
+  const headerSummary = $derived.by(() => {
+    const parts = [preview.type];
+    if (selected?.kind === "file" && Number.isFinite(detailSize)) parts.push(formatObjectSize(detailSize, text.locale));
+    if (selected?.kind === "file" && detailModified) parts.push(formatObjectModified(detailModified, text.locale));
+    if (preview.truncated) parts.push(text.truncated);
+    return parts.filter(Boolean).join(" · ");
+  });
 
   function safeMarkdown(value) {
     const documentFragment = new DOMParser().parseFromString(marked.parse(value), "text/html");
@@ -27,14 +44,23 @@
   {#if !selected}<div class="empty">{text.noSelection}</div>
   {:else}
     <div class="preview-title">
-      <div class="preview-heading"><strong>{selected.name}</strong><small>{preview.type}{preview.truncated ? ` · ${text.truncated}` : ""}</small></div>
+      <div class="preview-heading"><strong>{selected.name}</strong><small>{headerSummary}</small></div>
       <div class="preview-actions">
+        {#if selected.kind === "file"}<Button variant="ghost" size="icon-sm" class="preview-action" title={text.details} aria-label={text.details} onclick={() => onDetails?.(selected)}><Info size={13} /></Button>{/if}
         {#if selected.kind === "file"}<Button variant="ghost" size="icon-sm" class="preview-action" title={text.versions} aria-label={text.versions} onclick={() => onVersions?.(selected)}><History size={13} /></Button>{/if}
         {#if selected.kind !== "directory" && selected.kind !== "bucket"}<Button variant="ghost" size="sm" class="preview-action" onclick={() => onDownload?.(selected)}><Download size={13} />{text.download}</Button><Button variant="ghost" size="sm" class="preview-action" onclick={() => onShare?.(selected)}><Link2 size={13} />{text.share}</Button>{/if}
         {#if selected.kind !== "bucket" && !readOnly}<Button variant="ghost" size="sm" class="preview-action" onclick={() => onRename?.(selected)}><Pencil size={13} />{text.rename}</Button>{/if}
         {#if selected.kind !== "bucket" && !readOnly}<Button variant="destructive" size="sm" class="preview-action" onclick={() => onDelete?.(selected)}><Trash2 size={13} />{text.delete}</Button>{/if}
       </div>
     </div>
+    {#if selected.kind === "file" && (preview.kind === "binary" || preview.kind === "error")}
+      <dl class="object-details">
+        <div><dt>{text.size}</dt><dd title={Number.isFinite(detailSize) ? `${detailSize.toLocaleString(text.locale)} B` : ""}>{Number.isFinite(detailSize) ? formatObjectSize(detailSize, text.locale) : "—"}</dd></div>
+        <div><dt>{text.type}</dt><dd class="detail-type" title={detailType}>{detailType || "—"}</dd></div>
+        <div><dt>{text.modified}</dt><dd title={text.modifiedHint}>{detailModified ? formatObjectModified(detailModified, text.locale) : "—"}</dd></div>
+        {#if detailEtag}<div><dt>ETag</dt><dd class="detail-etag" title={detailEtag}>{detailEtag}</dd></div>{/if}
+      </dl>
+    {/if}
     <div class="preview-content">
       {#if preview.kind === "loading"}<div class="empty loading-state"><span class="spinner" aria-hidden="true"></span>{text.loading}</div>
       {:else if preview.kind === "error"}<div class="error">{text.error}: {preview.value}</div>
@@ -83,6 +109,11 @@
   .preview-title small { color: color-mix(in srgb, CanvasText 55%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .preview-actions { display: flex; flex: 0 0 auto; gap: 4px; }
   .preview-content { min-height: 0; flex: 1; overflow: auto; padding: 16px; }
+  .object-details { display: grid; flex: 0 0 auto; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; padding: 8px 14px; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-size: 11px; }
+  .object-details dt { font-weight: 600; }
+  .object-details dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .object-details .detail-etag, .object-details .detail-type { font-family: ui-monospace, monospace; }
+  .object-details .detail-etag { white-space: normal; overflow-wrap: anywhere; user-select: text; }
   .preview-content img { display: block; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
   .preview-content video { display: block; width: 100%; max-height: 75%; margin: auto; }
   .preview-content audio { width: 100%; margin-top: 24px; }

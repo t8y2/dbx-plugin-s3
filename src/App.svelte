@@ -7,6 +7,7 @@
   import * as Dialog from "./lib/components/ui/dialog/index.js";
   import { inlineUploadBytes, uploadFile, uploadTarget } from "./lib/uploads.js";
   import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
+  import { formatObjectModified, formatObjectSize, prettyJsonText, sortEntriesDirectoryFirst } from "./lib/object-metadata.js";
   import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
 
   const providerId = "io.github.t8y2.s3.files";
@@ -21,7 +22,7 @@
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
-      folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path", rootLabel: "S3",
+      folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path", rootLabel: "S3", details: "Details", close: "Close",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
       uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version only when bucket versioning is enabled; otherwise they are rejected.",
     },
@@ -32,7 +33,7 @@
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
-      folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径", rootLabel: "S3",
+      folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径", rootLabel: "S3", details: "详细信息", close: "关闭",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
       uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传仅在存储桶已启用版本管理时创建新版本，否则拒绝覆盖。",
     },
@@ -47,6 +48,7 @@
   let readOnly = $state(false);
   let selected = $state(null);
   let preview = $state({ kind: "empty", value: "", type: "", truncated: false });
+  let entryMetadata = $state(null);
   let loading = $state(false);
   let operating = $state(false);
   let error = $state("");
@@ -200,6 +202,17 @@
   const loadMammoth = () => mammothPromise ||= import("mammoth").then(({ default: module }) => module);
   const loadXlsx = () => xlsxPromise ||= import("xlsx");
 
+  // One HEAD per selection powers the details card, including for objects
+  // that cannot be previewed; failures leave the card with listing data only.
+  async function loadEntryMetadata(uri, requestId) {
+    try {
+      const metadata = await invoke("filesystem/stat", { uri });
+      if (requestId === previewRequest && selected?.uri === uri) entryMetadata = metadata;
+    } catch {
+      // Supplementary data only; the preview itself must not fail on this.
+    }
+  }
+
   async function invoke(method, params, options = {}) {
     return window.dbxPlugin.invoke(method, { ...params, connectionId: connectionId(), providerId }, options);
   }
@@ -246,9 +259,9 @@
       const incoming = result?.entries || [];
       if (append) {
         const existingUris = new Set(entries.map((entry) => entry.uri));
-        entries = [...entries, ...incoming.filter((candidate) => !existingUris.has(candidate.uri))];
+        entries = sortEntriesDirectoryFirst([...entries, ...incoming.filter((candidate) => !existingUris.has(candidate.uri))]);
       } else {
-        entries = incoming;
+        entries = sortEntriesDirectoryFirst(incoming);
       }
       currentUri = uri;
       nextCursor = result?.nextCursor || "";
@@ -273,10 +286,12 @@
     await previewReader?.cancel();
     previewReader = undefined;
     selected = entry;
+    entryMetadata = null;
     if (entry.kind === "directory" || entry.kind === "bucket") {
       preview = { kind: "empty", value: "", type: text.folder, truncated: false };
       return;
     }
+    void loadEntryMetadata(entry.uri, requestId);
     const type = normalizedType(entry);
     const kind = previewKind(entry, type);
     if (kind === "binary") {
@@ -320,7 +335,8 @@
         if (requestId !== previewRequest) return;
         preview = { kind: "spreadsheet", value: "", type: text.spreadsheet, sheets, sheetIndex: 0, truncated: !!result.truncated || sheets.some((sheet) => sheet.truncated) };
       } else if (kind === "markdown" || kind === "text") {
-        const value = new TextDecoder().decode(bytes);
+        let value = new TextDecoder().decode(bytes);
+        if (kind === "text" && (resultType === "application/json" || extension(entry.name) === "json")) value = prettyJsonText(value);
         preview = { kind, value, type: kind === "markdown" ? text.markdown : resultType, truncated: !!result.truncated };
       }
     } catch (cause) {
@@ -440,6 +456,25 @@
       dialog.truncated = result.truncated;
     } catch (cause) {
       if (dialog === currentDialog) dialog.error = cause?.message || text.operationFailed;
+    } finally {
+      if (dialog === currentDialog) dialog.loading = false;
+    }
+  }
+
+  // The details dialog is the second layer for technical metadata (ETag);
+  // selection already fetched it, so the cached copy opens instantly.
+  async function showDetails(entry) {
+    contextMenu = null;
+    const cached = selected?.uri === entry.uri ? entryMetadata : null;
+    dialog = { kind: "details", entry, metadata: cached, loading: !cached };
+    dialogOpen = true;
+    if (cached) return;
+    const currentDialog = dialog;
+    try {
+      const metadata = await invoke("filesystem/stat", { uri: entry.uri });
+      if (dialog === currentDialog) dialog.metadata = metadata;
+    } catch {
+      // The dialog falls back to the listing data below.
     } finally {
       if (dialog === currentDialog) dialog.loading = false;
     }
@@ -574,7 +609,7 @@
 
   async function confirmDialog() {
     const active = dialog;
-    if (!active || active.kind === "share" || active.kind === "versions") return;
+    if (!active || active.kind === "share" || active.kind === "versions" || active.kind === "details") return;
     if (active.kind === "delete") {
       cancelDialog();
       await runOperation(async () => {
@@ -622,6 +657,7 @@
     void previewReader?.cancel();
     previewReader = undefined;
     selected = null;
+    entryMetadata = null;
     preview = { kind: "empty", value: "", type: "", truncated: false };
   }
 
@@ -808,7 +844,7 @@
     {/if}
     <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onSheetChange={(value) => (preview = value)} />
+    <PreviewPane {selected} {preview} metadata={entryMetadata} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onDetails={showDetails} onSheetChange={(value) => (preview = value)} />
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
@@ -832,10 +868,10 @@
     {#if dialog}
       <Dialog.Content showCloseButton={false} class={`dialog-content${dialog.kind === "versions" ? " versions-dialog" : ""}`}>
         <Dialog.Header>
-          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : text.newFolder}</Dialog.Title>
+          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "details" ? text.details : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : text.newFolder}</Dialog.Title>
           {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>
           {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>
-          {:else if dialog.kind === "share" || dialog.kind === "versions"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
+          {:else if dialog.kind === "share" || dialog.kind === "versions" || dialog.kind === "details"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
         </Dialog.Header>
         {#if dialog.kind === "share"}
           <label class="dialog-field">{text.shareExpires}
@@ -858,14 +894,28 @@
             {/each}{/if}
           </div>
           {#if dialog.truncated}<p class="share-hint">{text.versionsTruncated}</p>{/if}
+        {:else if dialog.kind === "details"}
+          {@const detail = { size: dialog.metadata?.size ?? dialog.entry.size, type: dialog.metadata?.contentType || dialog.entry.contentType || "", modified: dialog.metadata?.lastModified || dialog.entry.modifiedAt || "", etag: dialog.metadata?.etag || "" }}
+          {#if dialog.loading}<p class="share-hint">{text.loading}</p>
+          {:else}
+            <dl class="details-list">
+              <div><dt>{text.size}</dt><dd title={Number.isFinite(detail.size) ? `${detail.size.toLocaleString(text.locale)} B` : ""}>{Number.isFinite(detail.size) ? formatObjectSize(detail.size, text.locale) : "—"}</dd></div>
+              <div><dt>{text.type}</dt><dd class="detail-mono" title={detail.type}>{detail.type || "—"}</dd></div>
+              <div><dt>{text.modified}</dt><dd title={text.modifiedHint}>{detail.modified ? formatObjectModified(detail.modified, text.locale) : "—"}</dd></div>
+              <div><dt>ETag</dt><dd class="detail-mono" title={detail.etag}>{detail.etag || "—"}</dd></div>
+            </dl>
+          {/if}
         {:else if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
           <label class="dialog-field">{dialog.kind === "rename" ? text.newName : text.folderName}<input bind:value={dialog.value} onkeydown={(event) => event.key === "Enter" && confirmDialog()} /></label>
         {/if}
         <Dialog.Footer class="dialog-actions">
-          <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
           {#if dialog.kind === "share"}
             <Button disabled={!dialog.url} onclick={copyShareUrl}>{shareCopied ? text.copied : text.copy}</Button>
-          {:else if dialog.kind !== "versions"}
+          {:else if dialog.kind === "versions"}
+            <Button variant="outline" onclick={cancelDialog}>{text.close}</Button>
+          {:else if dialog.kind === "details"}
+            <Button onclick={cancelDialog}>{text.close}</Button>
+          {:else}
             <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
           {/if}
         </Dialog.Footer>
@@ -914,8 +964,8 @@
   .path-group { border-color: var(--color-border, color-mix(in srgb, CanvasText 10%, transparent)); background: var(--color-background, Canvas); }
   .toolbar input { border-color: var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); background: var(--color-background, Canvas); }
   .split { border-color: var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); border-radius: 6px; background: var(--color-background, Canvas); }
-  :global(.dialog-content) { width: min(360px, calc(100% - 32px)); }
-  :global(.versions-dialog) { width: min(640px, calc(100% - 32px)); max-width: min(640px, calc(100% - 32px)); height: fit-content; }
+  :global(.dialog-content) { width: min(360px, 100%); }
+  :global(.versions-dialog) { width: min(640px, 100%); }
   .versions-list { max-height: 50vh; overflow: auto; font-size: 12px; }
   .version-row { padding: 12px 0; border-bottom: 1px solid var(--color-border, #8884); }
   .version-row code { display: block; overflow-wrap: anywhere; user-select: text; }
@@ -928,6 +978,11 @@
   .share-url { display: grid; gap: 6px; margin-top: 12px; }
   .share-url input { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; font: 11px/1.4 ui-monospace, monospace; }
   .share-error { color: var(--color-destructive, #dc2626); font-size: 12px; }
+  .details-list { display: grid; gap: 10px; margin: 4px 0 0; font-size: 12px; }
+  .details-list div { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+  .details-list dt { color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); }
+  .details-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; user-select: text; font-variant-numeric: tabular-nums; }
+  .details-list .detail-mono { font-family: ui-monospace, monospace; font-size: 11px; }
   .share-hint { color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-size: 12px; }
   :global(.dialog-actions) { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .context-menu { position: fixed; z-index: 9999; min-width: 160px; width: max-content; max-width: calc(100vw - 16px); padding: 4px; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-foreground, CanvasText) 10%, transparent); border-radius: 6px; background: var(--color-popover, var(--color-background, Canvas)); color: var(--color-popover-foreground, var(--color-foreground, CanvasText)); box-shadow: 0 12px 32px color-mix(in srgb, CanvasText 18%, transparent); }

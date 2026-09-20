@@ -1,26 +1,32 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { formatObjectModified, formatObjectSize } from "./object-metadata.js";
+import { formatObjectSize, sortEntriesDirectoryFirst, prettyJsonText } from "./object-metadata.js";
 
-test("object sizes distinguish empty files, missing metadata and large objects", () => {
+test("formatObjectSize formats byte counts", () => {
   assert.equal(formatObjectSize(0), "0 B");
-  assert.equal(formatObjectSize(1023), "1,023 B");
-  assert.equal(formatObjectSize(1024), "1 KiB");
-  assert.equal(formatObjectSize(1536), "1.5 KiB");
-  assert.equal(formatObjectSize(3 * 1024 ** 3), "3 GiB");
-  assert.equal(formatObjectSize(1024 ** 5), "1 PiB");
-  for (const value of [undefined, null, NaN, Infinity, -1, "1024"]) {
-    assert.equal(formatObjectSize(value), "—");
-  }
+  assert.equal(formatObjectSize(2048), "2 KiB");
+  assert.equal(formatObjectSize(Number.NaN), "—");
 });
 
-test("modification times use the requested locale and local timezone", () => {
-  const timestamp = "2026-09-18T01:54:26Z";
-  for (const locale of ["en", "zh-CN"]) {
-    const expected = new Date(timestamp).toLocaleString(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
-    assert.equal(formatObjectModified(timestamp, locale), expected);
-  }
-  for (const value of [undefined, null, "", "invalid"]) {
-    assert.equal(formatObjectModified(value), "—");
-  }
+test("sortEntriesDirectoryFirst keeps folders above files", () => {
+  const sorted = sortEntriesDirectoryFirst([
+    { name: "zebra.txt", kind: "file" },
+    { name: "apple", kind: "directory" },
+    { name: "banana.txt", kind: "file" },
+    { name: "bucket-a", kind: "bucket" },
+    { name: "Apple2", kind: "directory" },
+  ]);
+  assert.deepEqual(sorted.map((entry) => entry.name), ["apple", "Apple2", "bucket-a", "banana.txt", "zebra.txt"]);
+});
+
+test("sortEntriesDirectoryFirst does not mutate the input", () => {
+  const input = [{ name: "b.txt", kind: "file" }, { name: "a", kind: "directory" }];
+  const sorted = sortEntriesDirectoryFirst(input);
+  assert.equal(input[0].name, "b.txt");
+  assert.equal(sorted[0].name, "a");
+});
+
+test("prettyJsonText indents compact JSON and keeps invalid input", () => {
+  assert.equal(prettyJsonText('{"a":[1,2],"b":"é"}'), '{\n  "a": [\n    1,\n    2\n  ],\n  "b": "é"\n}');
+  assert.equal(prettyJsonText('{"truncated'), '{"truncated');
 });

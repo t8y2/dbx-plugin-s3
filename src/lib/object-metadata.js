@@ -12,3 +12,24 @@ export function formatObjectModified(value, locale = "en") {
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleString(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 }
+
+// Explorer/Finder convention: directories and buckets group before files no
+// matter their names, so listings keep folders on top across appended pages.
+export function sortEntriesDirectoryFirst(entries) {
+  const weight = (entry) => (entry.kind === "directory" || entry.kind === "bucket" ? 1 : 0);
+  return [...entries].sort((left, right) => {
+    const difference = weight(right) - weight(left);
+    if (difference !== 0) return difference;
+    return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
+// Pretty-print JSON previews; a parse failure (truncated or streamed text)
+// keeps the raw bytes visible instead of blanking the preview.
+export function prettyJsonText(value) {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
