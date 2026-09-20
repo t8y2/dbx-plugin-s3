@@ -9,6 +9,11 @@
   import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
   import { formatObjectModified, formatObjectSize, prettyJsonText, sortEntriesDirectoryFirst } from "./lib/object-metadata.js";
   import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  // The host inlines only the top-level script into the sandbox document, so
+  // dynamic imports resolve against tauri.localhost and 404; preview parsers
+  // must ship inside the main bundle.
+  import mammoth from "mammoth";
+  import * as XLSX from "xlsx";
 
   const providerId = "io.github.t8y2.s3.files";
   const previewLimits = { image: 4 * 1024 * 1024, video: 4 * 1024 * 1024, audio: 4 * 1024 * 1024, text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024, word: 4 * 1024 * 1024, spreadsheet: 2 * 1024 * 1024 };
@@ -18,7 +23,7 @@
     en: {
       locale: "en", size: "Size", modified: "Last modified", modifiedHint: "S3 last-modified time (upload or overwrite), shown in local time.", saving: "Saving",
       title: "S3 object browser", path: "Path", refresh: "Refresh", up: "Up", open: "Open", empty: "This folder is empty.",
-      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "Downloads are limited to 256 MiB.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.", archiveTooLarge: "ZIP downloads are limited to 220 MiB of source data.", uploading: "Uploading", downloading: "Downloading", downloadZip: "Download as ZIP", downloadZipCount: "ZIP {count} items",
+      loading: "Loading objects…", preview: "Preview", noSelection: "Select an object to preview it.", binary: "This object cannot be previewed.", previewTooLarge: "This object is too large to preview here.", downloadTooLarge: "The current DBX host buffers downloads in memory, so files are capped at 256 MiB. A newer DBX host streams to disk with no size limit.", downloadUnavailable: "Downloads require a newer DBX host.", uploadLargeUnavailable: "Large uploads require a newer DBX host.", archiveTooLarge: "The current DBX host buffers ZIP downloads in memory, so source data is capped at 220 MiB. A newer DBX host streams with no limit.", uploading: "Uploading", downloading: "Downloading", downloadZip: "Download as ZIP", downloadZipCount: "ZIP {count} items",
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
@@ -29,7 +34,7 @@
     zh: {
       locale: "zh-CN", size: "大小", modified: "修改时间", modifiedHint: "S3 最后修改时间（上传或覆盖），按本地时区显示。", saving: "正在保存",
       title: "S3 对象浏览器", path: "路径", refresh: "刷新", up: "上级", open: "打开", empty: "此目录为空。",
-      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "下载大小不能超过 256 MiB。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。", archiveTooLarge: "ZIP 打包的源数据不能超过 220 MiB。", uploading: "正在上传", downloading: "正在下载", downloadZip: "下载为 ZIP", downloadZipCount: "打包 {count} 项",
+      loading: "正在加载对象…", preview: "预览", noSelection: "选择一个对象以预览。", binary: "此对象无法预览。", previewTooLarge: "对象过大，已跳过预览。", downloadTooLarge: "当前 DBX 版本需要把下载完整读入内存，因此上限为 256 MiB；升级到更新版本的 DBX 后会自动改为流式落盘，不再有大小限制。", downloadUnavailable: "当前 DBX 宿主不支持下载。", uploadLargeUnavailable: "当前 DBX 宿主不支持大文件上传。", archiveTooLarge: "当前 DBX 版本需要把打包结果完整读入内存，因此源数据上限为 220 MiB；升级到更新版本的 DBX 后会自动解除限制。", uploading: "正在上传", downloading: "正在下载", downloadZip: "下载为 ZIP", downloadZipCount: "打包 {count} 项",
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
@@ -71,8 +76,6 @@
   let shareUrlInput = $state(null);
   let previewRequest = 0;
   let previewReader;
-  let mammothPromise;
-  let xlsxPromise;
   let shareRequest = 0;
 
   const shareExpiryOptions = $derived([
@@ -199,9 +202,6 @@
     if (type.startsWith("text/") || ["application/json", "application/javascript", "application/xml"].includes(type) || textExtensions.has(ext)) return "text";
     return "binary";
   };
-  const loadMammoth = () => mammothPromise ||= import("mammoth").then(({ default: module }) => module);
-  const loadXlsx = () => xlsxPromise ||= import("xlsx");
-
   // One HEAD per selection powers the details card, including for objects
   // that cannot be previewed; failures leave the card with listing data only.
   async function loadEntryMetadata(uri, requestId) {
@@ -319,12 +319,10 @@
       } else if (kind === "audio") {
         preview = { kind, value: URL.createObjectURL(new Blob([bytes], { type: resultType })), type: resultType, truncated: !!result.truncated };
       } else if (kind === "word") {
-        const mammoth = await loadMammoth();
         const word = await mammoth.extractRawText({ arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
         if (requestId !== previewRequest) return;
         preview = { kind: "text", value: word.value, type: text.word, truncated: !!result.truncated };
       } else if (kind === "spreadsheet") {
-        const XLSX = await loadXlsx();
         const workbook = XLSX.read(bytes, { type: "array", cellDates: true });
         const sheets = workbook.SheetNames.map((name) => {
           const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: "", raw: false });
@@ -731,7 +729,12 @@
       const saved = await saveBytes(fileName, entry ? normalizedType(entry, metadata) : "application/zip", bytes);
       if (!entry && saved) checkedUris = [];
     } catch (cause) {
-      if (!controller.signal.aborted) error = cause?.message || `${text.operationFailed}: ${String(cause)}`;
+      if (!controller.signal.aborted) {
+        const message = cause?.message || "";
+        // The legacy archive path rejects oversize plans in English; surface the
+        // localized copy so the reason and the upgrade path stay readable.
+        error = message.includes("S3 archive exceeds the size limit") ? text.archiveTooLarge : message || `${text.operationFailed}: ${String(cause)}`;
+      }
     } finally {
       downloadController = undefined;
       operating = false;
