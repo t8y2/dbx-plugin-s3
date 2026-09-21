@@ -14,9 +14,9 @@ function checkCancelled(signal) {
   if (signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
 }
 
-export async function uploadFile(file, { uri, invoke, sendBinary, encodeBase64, onProgress = () => {}, signal }) {
+export async function uploadFile(file, { uri, invoke, sendBinary, encodeBase64, onProgress = () => {}, overwrite = false, signal }) {
   checkCancelled(signal);
-  const parameters = { uri, contentType: file.type || "application/octet-stream", create: true, overwrite: false, allowNewVersion: true };
+  const parameters = { uri, contentType: file.type || "application/octet-stream", create: true, overwrite, allowNewVersion: true };
   if (file.size <= inlineUploadBytes) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     checkCancelled(signal);

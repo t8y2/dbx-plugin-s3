@@ -30,13 +30,14 @@ func writeOptions(ctx context.Context, connection *s3Connection, path objectPath
 	}
 	if exists && !overwrite && boolValue(values["allowNewVersion"]) {
 		configuration, versionErr := connection.client.GetBucketVersioning(ctx, remote.bucket)
-		if versionErr != nil {
-			return options, remoteError("S3 object already exists; could not verify bucket versioning: " + versionErr.Error())
-		}
-		if len(configuration.ExcludedPrefixes) > 0 {
+		if versionErr == nil && len(configuration.ExcludedPrefixes) > 0 {
 			return options, remoteError("S3 object already exists; automatic version uploads are disabled for buckets with versioning exclusions")
 		}
-		overwrite = configuration.Status == "Enabled"
+		// A failed versioning probe (S3-compatible endpoints without the S3
+		// versioning API, or denied permissions) must not bury the
+		// already-exists rejection: fall through so the caller can offer an
+		// explicit overwrite instead.
+		overwrite = versionErr == nil && configuration.Status == "Enabled"
 	}
 	if exists && !overwrite {
 		return options, remoteError("S3 object already exists: " + path.key)
@@ -46,9 +47,10 @@ func writeOptions(ctx context.Context, connection *s3Connection, path objectPath
 	}
 	if etag != "" {
 		options.SetMatchETag(etag)
-	} else if !overwrite {
-		options.SetMatchETagExcept("*")
 	}
+	// Deliberately no If-None-Match guard for fresh objects: some S3-compatible
+	// services (Aliyun OSS among them) mishandle the header, and the StatObject
+	// probe above already enforces create semantics.
 	return options, nil
 }
 

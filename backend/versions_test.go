@@ -89,6 +89,45 @@ func TestWriteOptionsRejectsUncertainObjectState(test *testing.T) {
 	}
 }
 
+// Endpoints without the S3 versioning API (Aliyun OSS and friends) must still
+// surface the plain already-exists rejection so callers can offer an explicit
+// overwrite, and an explicit overwrite must skip the versioning probe.
+func TestWriteOptionsToleratesUnsupportedVersioningProbe(test *testing.T) {
+	fake := &fakeS3Server{bucket: "example-bucket", objects: map[string]fakeS3Object{"file.txt": newFakeObject([]byte("original"), "text/plain")}}
+	connection := versionTestConnection(test, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Has("versioning") {
+			response.WriteHeader(http.StatusNotImplemented)
+			return
+		}
+		fake.ServeHTTP(response, request)
+	}))
+	instance := &plugin{connections: map[string]*s3Connection{"test": connection}}
+	values := map[string]any{"connectionId": "test", "uri": "s3://example-bucket/file.txt", "dataBase64": "bmV3", "create": true, "allowNewVersion": true}
+	_, pluginError := instance.writeObject(values)
+	if pluginError == nil || !strings.Contains(pluginError.Message, "S3 object already exists: file.txt") {
+		test.Fatalf("unsupported versioning must fall through to already-exists: %v", pluginError)
+	}
+	values["overwrite"] = true
+	result, pluginError := instance.writeObject(values)
+	if pluginError != nil {
+		test.Fatal(pluginError)
+	}
+	fake.mutex.Lock()
+	data := string(fake.objects["file.txt"].data)
+	fake.mutex.Unlock()
+	if data != "new" || result == nil {
+		test.Fatalf("explicit overwrite failed: %s %#v", data, result)
+	}
+	// Fresh objects upload without any conditional header.
+	fake.mutex.Lock()
+	delete(fake.objects, "other.txt")
+	fake.mutex.Unlock()
+	_, pluginError = instance.writeObject(map[string]any{"connectionId": "test", "uri": "s3://example-bucket/other.txt", "dataBase64": "bmV3", "create": true})
+	if pluginError != nil {
+		test.Fatalf("fresh create failed: %v", pluginError)
+	}
+}
+
 func TestVersionListingExactKeyBasePathAndMarkers(test *testing.T) {
 	connection := versionTestConnection(test, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if !request.URL.Query().Has("versions") || request.URL.Query().Get("prefix") != "tenant/报告.txt" {

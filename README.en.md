@@ -33,14 +33,15 @@ S3 Browser is a plugin for [DBX](https://github.com/t8y2/dbx), the open-source d
 - ZIP downloads for folders and multi-object selections, with transfer progress.
 - Cancel individual or ZIP downloads. DBX desktop hosts with native streaming-download support ask for the destination first, write chunks of at most 1 MiB to a temporary file, and replace the destination only after success. Cancellation and failures preserve existing files. This path removes the legacy 256 MiB file / 220 MiB ZIP source-data limits; ZIPs still allow at most 20,000 files. Older and Web hosts retain the existing size limits and post-download save dialog.
 - Object lists show sizes and S3 last-modified (upload or overwrite) times in the local timezone. The empty-area context menu supports refresh, folder creation, and uploads.
+- The entry context menu copies a path in absolute (`s3://bucket/key`) or relative (bucket-less) form, ready to paste into the path bar added in 0.1.17.
 - AWS endpoint rewriting to dualstack is disabled by default and can be explicitly enabled in the connection form.
 - Optimistic write protection with ETags.
 
 **Object versions**
 
-- Same-name uploads create a new version when bucket versioning is enabled. Unversioned buckets, suspended versioning, and unverified versioning configurations continue to reject duplicate uploads.
+- Same-name uploads create a new version when bucket versioning is enabled. Every other bucket — unversioned, suspended, or unverifiable (S3-compatible services without the versioning API, e.g. Aliyun OSS) — asks whether to overwrite the existing object before replacing it.
 - Use **Versions** in the file preview toolbar or context menu to inspect version IDs, timestamps, sizes, the latest version, and delete markers. Listings are limited to the first 1,000 versions with an explicit truncation notice; restoring or deleting historical versions is not included.
-- Duplicate uploads require permission to read bucket versioning; version history requires permission to list object versions. The plugin never enables or changes bucket versioning automatically and conservatively rejects automatic duplicate uploads when versioning exclusions are configured.
+- Duplicate uploads read bucket versioning when available; version history requires permission to list object versions. The plugin never enables or changes bucket versioning automatically and conservatively rejects automatic duplicate uploads when versioning exclusions are configured.
 
 **Sharing**
 

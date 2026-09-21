@@ -9,7 +9,7 @@
   import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
   import { formatObjectModified, formatObjectSize, prettyJsonText, sortEntriesDirectoryFirst } from "./lib/object-metadata.js";
   import { TREE_ROOT, baseNameOfUri, displayUri, normalizePathInput as normalizePathInputFrom, parentOfUri, sameEntryUri } from "./lib/path-navigation.js";
-  import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
+  import { ArrowUp, ChevronRight, Copy, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
   // The host inlines only the top-level script into the sandbox document, so
   // dynamic imports resolve against tauri.localhost and 404; preview parsers
   // must ship inside the main bundle.
@@ -29,8 +29,9 @@
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
       folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path (or double-click the path)", rootLabel: "S3", details: "Details", close: "Close", pathNotFound: "Path not found: {uri}",
+      copyPath: "Copy path", copyLabel: "Copy", absolutePath: "Absolute path", relativePath: "Relative path (without bucket)", overwriteTitle: "Overwrite file", confirmOverwrite: "{name} already exists. Overwrite it?", confirmOverwriteHint: "Unless the bucket has versioning enabled, the previous content is replaced and cannot be restored.", overwrite: "Overwrite",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
-      uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version only when bucket versioning is enabled; otherwise they are rejected.",
+      uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version when bucket versioning is enabled; otherwise you will be asked whether to overwrite.",
     },
     zh: {
       locale: "zh-CN", size: "大小", modified: "修改时间", modifiedHint: "S3 最后修改时间（上传或覆盖），按本地时区显示。", saving: "正在保存",
@@ -40,8 +41,9 @@
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
       folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径（或双击路径栏）", rootLabel: "S3", details: "详细信息", close: "关闭", pathNotFound: "未找到路径：{uri}",
+      copyPath: "复制路径", copyLabel: "复制", absolutePath: "绝对路径", relativePath: "相对路径（不含桶）", overwriteTitle: "覆盖文件", confirmOverwrite: "文件「{name}」已存在，确定覆盖吗？", confirmOverwriteHint: "桶未开启版本管理时，覆盖后原内容无法恢复。", overwrite: "覆盖",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
-      uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传仅在存储桶已启用版本管理时创建新版本，否则拒绝覆盖。",
+      uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传在存储桶启用版本管理时自动创建新版本，否则会询问是否覆盖。",
     },
   };
 
@@ -84,6 +86,8 @@
   let shareCopied = $state(false);
   let shareCopyBlocked = $state(false);
   let shareUrlInput = $state(null);
+  let absolutePathInput = $state(null);
+  let relativePathInput = $state(null);
   let previewRequest = 0;
   let previewReader;
   let shareRequest = 0;
@@ -499,12 +503,26 @@
           transfer.name = file.webkitRelativePath || file.name;
           transfer.sent = completedBytes;
           if (file.size > inlineUploadBytes && !canStream) throw new Error(text.uploadLargeUnavailable);
-          await uploadFile(file, {
-            uri: uploadTarget(uploadUri, file), invoke: uploadInvoke,
+          const uploadOnce = (overwrite = false) => uploadFile(file, {
+            uri: uploadTarget(uploadUri, file), invoke: uploadInvoke, overwrite,
             sendBinary: (channel, bytes) => window.dbxPlugin.sendBinary(channel, bytes),
             encodeBase64: (bytes) => window.dbxPlugin.encodeBase64(bytes), signal: controller.signal,
             onProgress: (processed, confirming) => { transfer.sent = completedBytes + processed; transfer.confirming = confirming; },
           });
+          try {
+            await uploadOnce();
+          } catch (cause) {
+            const message = cause?.message || String(cause);
+            // Versioned buckets swallow same-name uploads as new versions;
+            // everywhere else ask before replacing the existing object.
+            if (controller.signal.aborted || !message.startsWith("S3 object already exists")) throw cause;
+            const overwrite = await new Promise((resolve) => {
+              dialog = { kind: "overwrite", name: transfer.name, resolve };
+              dialogOpen = true;
+            });
+            if (!overwrite) throw cause;
+            await uploadOnce(true);
+          }
           completedBytes += file.size;
           transfer.sent = completedBytes;
         }
@@ -624,51 +642,74 @@
     }
   }
 
+  // Clipboard write with the share-dialog fallback chain: the host bridge is
+  // the only path that works in every sandboxed workbench; the async clipboard
+  // API is denied in old sandboxed iframes, and execCommand needs the
+  // selection of a focused, visible input to reach the system clipboard.
+  async function copyToClipboard(value, inputElement) {
+    if (typeof window.dbxPlugin?.copy === "function") {
+      try {
+        await window.dbxPlugin.copy(value);
+        return true;
+      } catch {
+        // fall through to the in-page fallbacks
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // fall through
+    }
+    inputElement?.focus();
+    inputElement?.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    }
+  }
+
   async function copyShareUrl() {
     const value = dialog?.url;
     if (!value) return;
-    let ok = false;
-    if (typeof window.dbxPlugin?.copy === "function") {
-      // The host bridge writes the system clipboard directly and is the only
-      // path that works inside the sandboxed workbench iframe on every host.
-      try {
-        await window.dbxPlugin.copy(value);
-        ok = true;
-      } catch {
-        ok = false;
-      }
-    }
-    if (!ok) {
-      try {
-        await navigator.clipboard.writeText(value);
-        ok = true;
-      } catch {
-        ok = false;
-      }
-    }
-    if (!ok) {
-      // Sandboxed workbench iframes (DBX and the dev host) deny the async
-      // clipboard API and offscreen-copy tricks, but copying the selection of
-      // a focused, visible input still reaches the system clipboard.
-      shareUrlInput?.focus();
-      shareUrlInput?.select();
-      try {
-        ok = document.execCommand("copy");
-      } catch {
-        ok = false;
-      }
-    }
+    const ok = await copyToClipboard(value, shareUrlInput);
     shareCopied = ok;
     shareCopyBlocked = !ok;
     if (ok) setTimeout(() => (shareCopied = false), 2000);
   }
 
+  function showCopyPath(entry) {
+    contextMenu = null;
+    const absolute = displayUri(entry.uri);
+    const relative = absolute.replace(/^s3:\/\/[^/]+\//, "").replace(/\/+$/, "");
+    dialog = { kind: "copy-path", entry, absolute, relative };
+    dialogOpen = true;
+  }
+
+  async function copyPathValue(which) {
+    if (dialog?.kind !== "copy-path") return;
+    const inputElement = which === "absolute" ? absolutePathInput : relativePathInput;
+    const ok = await copyToClipboard(dialog[which], inputElement);
+    dialog.copied = ok ? which : "";
+    dialog.copyBlocked = !ok;
+    if (ok) setTimeout(() => { if (dialog?.kind === "copy-path") dialog.copied = ""; }, 2000);
+  }
+
+  function settleOverwrite(accept) {
+    if (dialog?.kind === "overwrite") dialog.resolve?.(accept);
+  }
+
   function handleDialogOpenChange(open) {
     dialogOpen = open;
-    if (!open) dialog = null;
+    if (!open) {
+      settleOverwrite(false);
+      dialog = null;
+    }
   }
 
   function cancelDialog() {
+    settleOverwrite(false);
     dialogOpen = false;
     dialog = null;
   }
@@ -679,7 +720,13 @@
 
   async function confirmDialog() {
     const active = dialog;
-    if (!active || active.kind === "share" || active.kind === "versions" || active.kind === "details") return;
+    if (!active || active.kind === "share" || active.kind === "versions" || active.kind === "details" || active.kind === "copy-path") return;
+    if (active.kind === "overwrite") {
+      active.resolve?.(true);
+      dialogOpen = false;
+      dialog = null;
+      return;
+    }
     if (active.kind === "delete") {
       cancelDialog();
       await runOperation(async () => {
@@ -935,6 +982,7 @@
         {/if}
       {:else}
       {#if contextMenu.entry.kind === "file"}<button role="menuitem" onclick={() => showVersions(contextMenu.entry)}><History size={14} />{text.versions}</button>{/if}
+      {#if contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => showCopyPath(contextMenu.entry)}><Copy size={14} />{text.copyPath}</button>{/if}
       {#if contextMenu.entry.kind === "directory" || contextMenu.entry.kind === "bucket"}<button role="menuitem" onclick={() => openEntry(contextMenu.entry)}><FolderOpen size={14} />{text.open}</button><button role="menuitem" onclick={() => downloadArchive([contextMenu.entry.uri])}><FileArchive size={14} />{text.downloadZip}</button>{/if}
       {#if contextMenu.entry.kind !== "directory" && contextMenu.entry.kind !== "bucket"}<button role="menuitem" onclick={() => downloadEntry(contextMenu.entry)}><Download size={14} />{text.download}</button><button role="menuitem" onclick={() => shareEntry(contextMenu.entry)}><Link2 size={14} />{text.share}</button>{/if}
       {#if contextMenu.entry.kind !== "bucket" && !readOnly}<button role="menuitem" onclick={() => renameEntry(contextMenu.entry)}><Pencil size={14} />{text.rename}</button>{/if}
@@ -946,10 +994,11 @@
     {#if dialog}
       <Dialog.Content showCloseButton={false} class={`dialog-content${dialog.kind === "versions" ? " versions-dialog" : ""}`}>
         <Dialog.Header>
-          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "details" ? text.details : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : text.newFolder}</Dialog.Title>
+          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "details" ? text.details : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : dialog.kind === "copy-path" ? text.copyPath : dialog.kind === "overwrite" ? text.overwriteTitle : text.newFolder}</Dialog.Title>
           {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>
           {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>
-          {:else if dialog.kind === "share" || dialog.kind === "versions" || dialog.kind === "details"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
+          {:else if dialog.kind === "overwrite"}<Dialog.Description>{text.confirmOverwrite.replace("{name}", dialog.name)}</Dialog.Description>
+          {:else if dialog.kind === "share" || dialog.kind === "versions" || dialog.kind === "details" || dialog.kind === "copy-path"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
         </Dialog.Header>
         {#if dialog.kind === "share"}
           <label class="dialog-field">{text.shareExpires}
@@ -983,6 +1032,22 @@
               <div><dt>ETag</dt><dd class="detail-mono" title={detail.etag}>{detail.etag || "—"}</dd></div>
             </dl>
           {/if}
+        {:else if dialog.kind === "copy-path"}
+          <div class="copy-path-rows">
+            <div class="copy-path-row">
+              <span class="copy-path-label">{text.absolutePath}</span>
+              <input bind:this={absolutePathInput} readonly spellcheck="false" aria-label={text.absolutePath} value={dialog.absolute} onclick={(event) => event.currentTarget.select()} onkeydown={(event) => event.key === "Enter" && copyPathValue("absolute")} />
+              <Button variant="outline" size="sm" onclick={() => copyPathValue("absolute")}>{dialog.copied === "absolute" ? text.copied : text.copyLabel}</Button>
+            </div>
+            <div class="copy-path-row">
+              <span class="copy-path-label">{text.relativePath}</span>
+              <input bind:this={relativePathInput} readonly spellcheck="false" aria-label={text.relativePath} value={dialog.relative} onclick={(event) => event.currentTarget.select()} onkeydown={(event) => event.key === "Enter" && copyPathValue("relative")} />
+              <Button variant="outline" size="sm" onclick={() => copyPathValue("relative")}>{dialog.copied === "relative" ? text.copied : text.copyLabel}</Button>
+            </div>
+            {#if dialog.copyBlocked}<div class="share-hint">{text.copyBlocked}</div>{/if}
+          </div>
+        {:else if dialog.kind === "overwrite"}
+          <p class="share-hint">{text.confirmOverwriteHint}</p>
         {:else if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
           <label class="dialog-field">{dialog.kind === "rename" ? text.newName : text.folderName}<input bind:value={dialog.value} onkeydown={(event) => event.key === "Enter" && confirmDialog()} /></label>
         {/if}
@@ -993,6 +1058,11 @@
             <Button variant="outline" onclick={cancelDialog}>{text.close}</Button>
           {:else if dialog.kind === "details"}
             <Button onclick={cancelDialog}>{text.close}</Button>
+          {:else if dialog.kind === "copy-path"}
+            <Button variant="outline" onclick={cancelDialog}>{text.close}</Button>
+          {:else if dialog.kind === "overwrite"}
+            <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
+            <Button variant="destructive" onclick={confirmDialog}>{text.overwrite}</Button>
           {:else}
             <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
           {/if}
@@ -1062,6 +1132,11 @@
   .details-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; user-select: text; font-variant-numeric: tabular-nums; }
   .details-list .detail-mono { font-family: ui-monospace, monospace; font-size: 11px; }
   .share-hint { color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-size: 12px; }
+  .copy-path-rows { display: grid; gap: 10px; margin-top: 12px; }
+  .copy-path-row { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+  .copy-path-label { color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-size: 12px; }
+  .copy-path-row input { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 9px; color: var(--color-foreground, CanvasText); border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 18%, transparent)); border-radius: var(--radius-md, 6px); outline: none; background: var(--color-muted, color-mix(in srgb, CanvasText 5%, transparent)); cursor: text; font: 11px/1.4 ui-monospace, monospace; }
+  .copy-path-row input:focus { border-color: var(--color-primary, #6d5dfc); }
   :global(.dialog-actions) { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .context-menu { position: fixed; z-index: 9999; min-width: 160px; width: max-content; max-width: calc(100vw - 16px); padding: 4px; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-foreground, CanvasText) 10%, transparent); border-radius: 6px; background: var(--color-popover, var(--color-background, Canvas)); color: var(--color-popover-foreground, var(--color-foreground, CanvasText)); box-shadow: 0 12px 32px color-mix(in srgb, CanvasText 18%, transparent); }
   .context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 24px; padding: 4px 8px; color: inherit; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 13px; line-height: 16px; cursor: default; }
