@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import ObjectList from "./components/ObjectList.svelte";
   import PreviewPane from "./components/PreviewPane.svelte";
   import FolderTree from "./components/FolderTree.svelte";
@@ -8,6 +8,7 @@
   import { inlineUploadBytes, uploadFile, uploadTarget } from "./lib/uploads.js";
   import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
   import { formatObjectModified, formatObjectSize, prettyJsonText, sortEntriesDirectoryFirst } from "./lib/object-metadata.js";
+  import { TREE_ROOT, baseNameOfUri, displayUri, normalizePathInput as normalizePathInputFrom, parentOfUri, sameEntryUri } from "./lib/path-navigation.js";
   import { ArrowUp, ChevronRight, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Trash2, Upload } from "@lucide/svelte";
   // The host inlines only the top-level script into the sandbox document, so
   // dynamic imports resolve against tauri.localhost and 404; preview parsers
@@ -27,7 +28,7 @@
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
-      folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path", rootLabel: "S3", details: "Details", close: "Close",
+      folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path (or double-click the path)", rootLabel: "S3", details: "Details", close: "Close", pathNotFound: "Path not found: {uri}",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
       uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version only when bucket versioning is enabled; otherwise they are rejected.",
     },
@@ -38,7 +39,7 @@
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
-      folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径", rootLabel: "S3", details: "详细信息", close: "关闭",
+      folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径（或双击路径栏）", rootLabel: "S3", details: "详细信息", close: "关闭", pathNotFound: "未找到路径：{uri}",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
       uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传仅在存储桶已启用版本管理时创建新版本，否则拒绝覆盖。",
     },
@@ -64,6 +65,15 @@
   let treeVisible = $state(true);
   let treeWidth = $state(192);
   let pathEditing = $state(false);
+  let pathDraft = $state("");
+  let pathInput = $state(null);
+  // A connection pinned to one bucket takes bucket-less pasted paths as key
+  // paths; bucket-listing connections treat the first segment as the bucket.
+  let bucketScoped = $state(false);
+  let scopedBucket = $state("");
+  // Bumping this object asks the object list to scroll a row into view.
+  let focusTarget = $state(null);
+  let focusSeq = 0;
   let uploadInput = $state(null);
   let folderUploadInput = $state(null);
   let uploadController;
@@ -87,7 +97,6 @@
   const connectionId = () => context?.connectionId || "";
   const isZh = () => (window.dbxPlugin?.locale || "en").toLowerCase().startsWith("zh");
   const decode = (value) => window.dbxPlugin.decodeBase64(value);
-  const TREE_ROOT = "s3:/";
 
   function treeAncestors(uri) {
     const parts = uri.replace(/^s3:\/*/, "").split("/").filter(Boolean);
@@ -268,10 +277,17 @@
       if (!append) {
         bucketMode = !!result?.bucketMode;
         readOnly = !!result?.readOnly;
+        if (uri === TREE_ROOT) {
+          // The root listing reveals the connection shape: buckets mean a
+          // free-roaming connection, keys mean the bucket is pinned.
+          bucketScoped = !bucketMode;
+          scopedBucket = bucketScoped ? (entries[0]?.uri.split("/")[2] || "") : "";
+        }
         checkedUris = [];
         clearPreview();
         void expandTreePath(uri);
       }
+      return result;
     } catch (cause) {
       error = cause?.message || String(cause);
     } finally {
@@ -363,10 +379,66 @@
     return `${base}${encodeURIComponent(name)}${directory ? "/" : ""}`;
   }
 
-  function containingUri(uri) {
-    const value = uri.replace(/\/$/, "");
-    const slash = value.lastIndexOf("/");
-    return slash <= value.indexOf("://") + 2 ? `${value}/` : `${value.slice(0, slash + 1)}`;
+  function beginPathEdit(seed = currentUri) {
+    pathDraft = seed;
+    pathEditing = true;
+    void tick().then(() => { pathInput?.focus(); pathInput?.select(); });
+  }
+
+  function cancelPathEdit() {
+    pathEditing = false;
+  }
+
+  const normalizePathInput = (raw) => normalizePathInputFrom(raw, { bucketScoped, scopedBucket });
+
+  async function commitPathEdit() {
+    if (!pathEditing) return;
+    const draft = pathDraft;
+    pathEditing = false;
+    const target = normalizePathInput(draft);
+    if (!target || target.replace(/\/+$/, "") === currentUri.replace(/\/+$/, "")) return;
+    await navigateToPath(target);
+  }
+
+  async function navigateToPath(target) {
+    if (target === TREE_ROOT) { void load(TREE_ROOT); return; }
+    const parts = target.replace(/^s3:\/*/, "").split("/").filter(Boolean);
+    // On a free-roaming connection a single segment can only be a bucket.
+    if (!bucketScoped && parts.length === 1) { void load(`${target}/`); return; }
+    try {
+      const metadata = await invoke("filesystem/stat", { uri: target });
+      await locateFile(target, metadata);
+      return;
+    } catch {
+      // Not an object (or no read access): fall through and treat as folder.
+    }
+    const previousUri = currentUri;
+    const result = await load(`${target}/`);
+    if (result?.exists === false) {
+      // Restore the previous folder first: the restoring load resets the
+      // error banner, so the not-found message has to land after it.
+      if (previousUri !== `${target}/`) await load(previousUri);
+      if (!error) error = text.pathNotFound.replace("{uri}", displayUri(target));
+    }
+  }
+
+  async function locateFile(uri, metadata) {
+    const parent = parentOfUri(uri);
+    await load(parent);
+    let found = entries.find((entry) => sameEntryUri(entry.uri, uri));
+    // The file may sit past the first page; keep appending pages (bounded) so
+    // it can be highlighted and scrolled to in the list.
+    for (let page = 0; !found && nextCursor && page < 25; page += 1) {
+      await load(parent, true);
+      found = entries.find((entry) => sameEntryUri(entry.uri, uri));
+    }
+    if (!found) {
+      // Beyond the page budget: synthesize the entry from the stat metadata so
+      // the preview still opens, even before the list reaches that key.
+      found = { name: baseNameOfUri(uri), uri, kind: "file", size: metadata.size, contentType: metadata.contentType, modifiedAt: metadata.lastModified, etag: metadata.etag };
+    }
+    focusTarget = { uri: found.uri, seq: ++focusSeq };
+    void selectEntry(found);
   }
 
   async function runOperation(operation, refreshUri = currentUri) {
@@ -644,7 +716,7 @@
       if (active.kind === "create-folder") {
         await invoke("filesystem/createDirectory", { uri: childUri(currentUri, name, true) });
       } else {
-        await invoke("filesystem/rename", { sourceUri: active.entry.uri, targetUri: childUri(containingUri(active.entry.uri), name, active.entry.kind === "directory"), overwrite: false });
+        await invoke("filesystem/rename", { sourceUri: active.entry.uri, targetUri: childUri(parentOfUri(active.entry.uri), name, active.entry.kind === "directory"), overwrite: false });
       }
     });
   }
@@ -815,16 +887,19 @@
       <Button variant="outline" size="icon-sm" aria-pressed={treeVisible} aria-label={text.folderTree} title={text.folderTree} onclick={() => (treeVisible = !treeVisible)}><ListTree size={14} /></Button>
       <Button variant="outline" size="icon-sm" aria-label={text.up} title={text.up} disabled={!parentUri() || loading} onclick={() => load(parentUri())}><ArrowUp size={14} /></Button>
       {#if pathEditing}
-        <input aria-label={text.path} bind:value={currentUri} onkeydown={(event) => { if (event.key === "Enter") { pathEditing = false; load(currentUri); } }} />
+        <input aria-label={text.path} bind:value={pathDraft} bind:this={pathInput} onkeydown={(event) => {
+          if (event.key === "Enter") { event.preventDefault(); void commitPathEdit(); }
+          else if (event.key === "Escape") { event.stopPropagation(); cancelPathEdit(); }
+        }} onblur={() => { if (pathEditing) cancelPathEdit(); }} />
       {:else}
-        <nav class="breadcrumbs" aria-label={text.path}>
+        <nav class="breadcrumbs" aria-label={text.path} title={text.editPath} ondblclick={(event) => beginPathEdit(event.target.closest(".crumb")?.dataset.uri || currentUri)}>
           {#each breadcrumbs as crumb, index (crumb.uri)}
             {#if index > 0}<span class="crumb-sep" aria-hidden="true"><ChevronRight size={12} /></span>{/if}
-            <button type="button" class="crumb" class:current={index === breadcrumbs.length - 1} onclick={() => { pathEditing = false; load(crumb.uri); }}>{crumb.name}</button>
+            <button type="button" class="crumb" data-uri={crumb.uri} class:current={index === breadcrumbs.length - 1} onclick={() => { pathEditing = false; load(crumb.uri); }}>{crumb.name}</button>
           {/each}
         </nav>
       {/if}
-      <Button variant="ghost" size="icon-sm" class="path-edit" aria-label={text.editPath} title={text.editPath} onclick={() => (pathEditing = !pathEditing)}><Pencil size={13} /></Button>
+      <Button variant="ghost" size="icon-sm" class="path-edit" aria-label={text.editPath} title={text.editPath} onmousedown={(event) => event.preventDefault()} onclick={() => (pathEditing ? cancelPathEdit() : beginPathEdit())}><Pencil size={13} /></Button>
     </div>
     <div class="toolbar-actions">
       {#if readOnly}<span class="readonly-badge" role="status" title={text.readOnlyTitle}><Lock size={12} />{text.readOnlyMode}</span>{/if}
@@ -845,7 +920,7 @@
       <div class="tree-panel"><FolderTree nodes={treeNodes} currentUri={currentUri} {text} rootLabel={text.rootLabel} onToggle={toggleTreeNode} onSelect={selectTreeNode} onLoadMore={continueTrees} /></div>
       <button class="tree-splitter" aria-label="Resize tree" onpointerdown={startTreeResize}></button>
     {/if}
-    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
+    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {focusTarget} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
     <PreviewPane {selected} {preview} metadata={entryMetadata} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onDetails={showDetails} onSheetChange={(value) => (preview = value)} />
   </section>
@@ -936,7 +1011,7 @@
   .path-group { min-width: 0; flex: 1; padding: 2px; border: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 5px; background: color-mix(in srgb, CanvasText 2%, transparent); }
   .toolbar input { min-width: 0; flex: 1; height: 30px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 4px; padding: 6px 9px; color: inherit; background: color-mix(in srgb, CanvasText 4%, transparent); font: 12px ui-monospace, monospace; outline: none; }
   .toolbar input:focus { border-color: var(--color-primary, #6d5dfc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #6d5dfc) 18%, transparent); }
-  .breadcrumbs { display: flex; flex: 1; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+  .breadcrumbs { display: flex; flex: 1; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; white-space: nowrap; -webkit-user-select: none; user-select: none; }
   .breadcrumbs::-webkit-scrollbar { display: none; }
   .crumb { flex: 0 0 auto; max-width: 220px; padding: 4px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); border: 0; border-radius: 5px; background: transparent; font: 12px ui-monospace, monospace; cursor: pointer; }
   .crumb:hover { color: var(--color-foreground, CanvasText); background: color-mix(in srgb, CanvasText 6%, transparent); }

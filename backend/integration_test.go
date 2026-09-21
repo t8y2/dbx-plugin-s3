@@ -306,6 +306,91 @@ func TestFilesystemLifecycleAgainstS3HTTPContract(t *testing.T) {
 	}
 }
 
+func TestListDistinguishesEmptyFoldersFromMissingPrefixes(t *testing.T) {
+	for _, basePath := range []string{"", "tenant/data"} {
+		t.Run("basePath="+basePath, func(t *testing.T) {
+			testListExistence(t, basePath)
+		})
+	}
+}
+
+func testListExistence(t *testing.T, basePath string) {
+	t.Helper()
+	const bucket = "example-bucket"
+	fake, server := newFakeS3Server(bucket)
+	defer server.Close()
+	if basePath != "" {
+		fake.objects["outside.txt"] = newFakeObject([]byte("untouched"), "text/plain")
+	}
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := minio.New(endpoint.Host, &minio.Options{
+		Creds:        credentials.NewStaticV4("access-key", "secret-key", ""),
+		Region:       "us-east-1",
+		BucketLookup: minio.BucketLookupPath,
+		MaxRetries:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := &plugin{connections: map[string]*s3Connection{}}
+	connectionParams := map[string]any{
+		"provider":   map[string]any{"id": pluginID + ".connection", "databaseType": "s3"},
+		"connection": map[string]any{
+			"id":       "connection-1",
+			"database": bucket,
+			"username": "access-key",
+			"external_config": map[string]any{
+				"endpoint":         server.URL,
+				"region":           "us-east-1",
+				"addressing_style": "path",
+				"base_path":        basePath,
+			},
+			"connection_secrets": map[string]any{"secret_key": "secret-key"},
+		},
+	}
+	if _, pluginError := invokeIntegration(t, instance, "connection/connect", connectionParams); pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	instance.connections["connection-1"].client = client
+	base := map[string]any{"providerId": filesystemProvider, "connectionId": "connection-1"}
+	if _, pluginError := invokeIntegration(t, instance, "filesystem/createDirectory", mergeIntegration(base, map[string]any{"uri": "s3://example-bucket/empty/"})); pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if _, pluginError := invokeIntegration(t, instance, "filesystem/write", mergeIntegration(base, map[string]any{
+		"uri": "s3://example-bucket/full/file.txt", "dataBase64": "ZmlsZQ==", "create": true,
+	})); pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+
+	empty, pluginError := invokeIntegration(t, instance, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3://example-bucket/empty/", "limit": 10}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if len(empty["entries"].([]filesystemEntry)) != 0 || empty["exists"] != true {
+		t.Fatalf("marker-backed empty folder must exist: %#v", empty)
+	}
+	missing, pluginError := invokeIntegration(t, instance, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3://example-bucket/missing/", "limit": 10}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if len(missing["entries"].([]filesystemEntry)) != 0 || missing["exists"] != false {
+		t.Fatalf("unknown prefix must be reported as missing: %#v", missing)
+	}
+	full, pluginError := invokeIntegration(t, instance, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3://example-bucket/full/", "limit": 10}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if !containsEntry(full, "file.txt", "file") {
+		t.Fatalf("unexpected non-empty listing: %#v", full)
+	}
+	if _, probed := full["exists"]; probed {
+		t.Fatalf("non-empty listings must not probe existence: %#v", full)
+	}
+}
+
 func testFilesystemLifecycle(t *testing.T, basePath string) {
 	t.Helper()
 	const bucket = "example-bucket"

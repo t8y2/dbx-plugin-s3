@@ -102,6 +102,12 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 	} else if budgetExhausted && lastScanned != "" {
 		// The scan budget ran out mid-page; resume after the last key examined.
 		result["nextCursor"] = encodeCursor(lastScanned)
+	} else if path.key != "" && !directoriesOnly && len(entries) == 0 {
+		// An empty listing is ambiguous between "folder exists but is empty"
+		// and "nothing under this prefix at all"; a marker-object probe lets
+		// path navigation report a genuine miss instead of a silent empty view.
+		_, err := connection.client.StatObject(context, path.bucket, remotePrefix, minio.StatObjectOptions{})
+		result["exists"] = err == nil
 	}
 	return result, nil
 }

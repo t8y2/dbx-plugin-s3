@@ -2,7 +2,7 @@
   import FileIcon from "./FileIcon.svelte";
   import { formatObjectModified, formatObjectSize } from "../lib/object-metadata.js";
 
-  let { entries = [], selected = null, checkedUris = [], loading = false, nextCursor = "", text, onSelect, onOpen, onContextMenu, onBackgroundContextMenu, onLoadMore, onToggleCheck, onToggleCheckAll } = $props();
+  let { entries = [], selected = null, checkedUris = [], loading = false, nextCursor = "", focusTarget = null, text, onSelect, onOpen, onContextMenu, onBackgroundContextMenu, onLoadMore, onToggleCheck, onToggleCheckAll } = $props();
   let listElement = $state(null);
   let loadMoreSentinel = $state(null);
   let sentinelVisible = false;
@@ -44,6 +44,18 @@
     observer.observe(loadMoreSentinel);
     return () => observer.disconnect();
   });
+
+  // Path navigation asks for a specific row to be brought into view; compute
+  // the delta by hand because old WKWebView ignores scrollIntoView options.
+  $effect(() => {
+    if (!focusTarget?.uri || !listElement) return;
+    const row = listElement.querySelector(`[data-uri="${focusTarget.uri.replace(/"/g, '\\"')}"]`);
+    if (!row) return;
+    const listRect = listElement.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.top < listRect.top) listElement.scrollTop += rowRect.top - listRect.top - 8;
+    else if (rowRect.bottom > listRect.bottom) listElement.scrollTop += rowRect.bottom - listRect.bottom + 8;
+  });
 </script>
 
 <div class="list-panel" role="group" bind:this={listElement} onscroll={handleListScroll} oncontextmenu={(event) => { event.preventDefault(); if (!event.target.closest(".entry-row")) onBackgroundContextMenu?.(event); }}>
@@ -60,7 +72,7 @@
     <div class="entries">
       {#each entries as entry (entry.uri)}
         {@const isChecked = checkedUris.includes(entry.uri)}
-        <div class="entry-row" class:checked={isChecked} class:selected={selected?.uri === entry.uri}>
+        <div class="entry-row" data-uri={entry.uri} class:checked={isChecked} class:selected={selected?.uri === entry.uri}>
           <button type="button" class="list-check" role="checkbox" aria-checked={isChecked ? "true" : "false"} aria-label={entry.name} onclick={() => onToggleCheck?.(entry)}>
             {#if isChecked}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3 5 8.8 9.5 3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>{/if}
           </button>
