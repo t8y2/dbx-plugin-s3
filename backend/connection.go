@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -50,7 +52,7 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	result.sessionToken = emptyIfNull(stringValue(secrets["session_token"]))
 	config, _ := connection["external_config"].(map[string]any)
 	result.dualstack = boolValue(config["aws_dualstack"]) || strings.EqualFold(strings.TrimSpace(stringValue(config["aws_dualstack"])), "true")
-	result.endpoint = stringValue(config["endpoint"])
+	result.endpoint = trimInvisible(stringValue(config["endpoint"]))
 	result.region = strings.TrimSpace(stringValue(config["region"]))
 	if result.region == "" {
 		result.region = "us-east-1"
@@ -67,7 +69,7 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	} else if endpointProtocol != "" {
 		parsedEndpoint, parseErr := url.Parse(result.endpoint)
 		if parseErr != nil || parsedEndpoint.Host == "" {
-			return connectionConfig{}, invalidParams("S3 endpoint must be a valid host")
+			return connectionConfig{}, invalidParams(fmt.Sprintf("S3 endpoint must be a valid host, got %q", result.endpoint))
 		}
 		parsedEndpoint.Scheme = endpointProtocol
 		result.endpoint = parsedEndpoint.String()
@@ -98,7 +100,7 @@ func parseConnection(values map[string]any) (connectionConfig, *dbxpluginsdk.Plu
 	}
 	parsedEndpoint, err := url.Parse(result.endpoint)
 	if err != nil || parsedEndpoint.Host == "" || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") || (parsedEndpoint.Path != "" && parsedEndpoint.Path != "/") || parsedEndpoint.RawQuery != "" || parsedEndpoint.Fragment != "" || parsedEndpoint.User != nil {
-		return connectionConfig{}, invalidParams("S3 endpoint must be an HTTP(S) origin without a path")
+		return connectionConfig{}, invalidParams(fmt.Sprintf("S3 endpoint must be an HTTP(S) origin without a path, got %q", result.endpoint))
 	}
 	return result, nil
 }
@@ -112,6 +114,15 @@ func emptyIfNull(value string) string {
 		return ""
 	}
 	return value
+}
+
+// trimInvisible strips leading/trailing whitespace and zero-width characters
+// that pasting from consoles, terminals, or web pages silently introduces;
+// the endpoint is the most paste-prone field in the form.
+func trimInvisible(value string) string {
+	return strings.TrimFunc(strings.TrimSpace(value), func(r rune) bool {
+		return unicode.IsSpace(r) || r == '\u200b' || r == '\ufeff'
+	})
 }
 
 func normalizeBasePath(value string) string {
