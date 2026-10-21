@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/t8y2/dbx/plugin-sdk-v1/plugins/manifest.schema.json",
+  "$schema": "https://raw.githubusercontent.com/t8y2/dbx/main/plugins/manifest.schema.json",
   "manifest_version": 1,
   "id": "io.github.t8y2.s3",
   "name": "S3 Browser",
@@ -46,6 +46,7 @@
           "default": "https",
           "binding": "config",
           "required": true,
+          "description": "Keep HTTPS unless the storage only speaks plain HTTP, such as an on-premises MinIO on a trusted network.",
           "options": [
             { "value": "https", "label": "HTTPS" },
             { "value": "http", "label": "HTTP" }
@@ -58,7 +59,8 @@
           "default": "s3.amazonaws.com",
           "binding": "config",
           "required": true,
-          "description": "Host name only; do not include a path."
+          "placeholder": "oss-cn-hangzhou.aliyuncs.com",
+          "description": "Host name only — no https:// prefix and no path. Examples: Aliyun OSS oss-cn-hangzhou.aliyuncs.com; Tencent COS cos.ap-guangzhou.myqcloud.com; AWS s3.us-east-1.amazonaws.com; MinIO 192.168.1.10:9000."
         },
         {
           "key": "region",
@@ -67,7 +69,7 @@
           "default": "us-east-1",
           "binding": "config",
           "required": false,
-          "description": "Optional for MinIO and most S3-compatible services; empty falls back to us-east-1."
+          "description": "AWS region such as us-east-1. Leave empty for Aliyun OSS, Tencent COS, and MinIO — the region is already part of their endpoints; empty falls back to us-east-1."
         },
         {
           "key": "base_path",
@@ -85,6 +87,7 @@
           "default": "auto",
           "binding": "config",
           "required": true,
+          "description": "Virtual-hosted puts the bucket into the hostname (the style Aliyun OSS and Tencent COS expect); path-style keeps it in the URL path (typical for MinIO and on-premises gateways). Automatic picks per provider.",
           "options": [
             { "value": "auto", "label": "Automatic" },
             { "value": "path", "label": "Path-style" },
@@ -107,7 +110,7 @@
           "binding": "database",
           "default": "",
           "required": false,
-          "description": "Optional. Leave empty to list all buckets after connecting."
+          "description": "Optional. Set a bucket name to scope this connection to that single bucket; leave empty to browse every bucket the credentials can access after connecting."
         },
         {
           "key": "access_key",
@@ -154,16 +157,16 @@
           "description": "连接 AWS S3 或 S3 兼容对象存储服务。",
           "fields": {
             "display_name": { "label": "连接名称" },
-            "endpoint_protocol": { "label": "端点协议", "options": { "https": "HTTPS", "http": "HTTP" } },
-            "endpoint": { "label": "端点主机", "description": "只填写主机名，不要填写路径。" },
-            "region": { "label": "区域", "description": "MinIO 等 S3 兼容服务可不填，留空时默认 us-east-1。" },
+            "endpoint_protocol": { "label": "端点协议", "description": "内网或自建明文环境（如未配置证书的 MinIO）选择 HTTP，其余保持 HTTPS。", "options": { "https": "HTTPS", "http": "HTTP" } },
+            "endpoint": { "label": "端点主机", "placeholder": "oss-cn-hangzhou.aliyuncs.com", "description": "只填主机名（Endpoint），不带 https://、不带路径。示例：阿里云 OSS 填 oss-cn-hangzhou.aliyuncs.com；腾讯云 COS 填 cos.ap-guangzhou.myqcloud.com；AWS 填 s3.us-east-1.amazonaws.com；MinIO/自建填 192.168.1.10:9000。" },
+            "region": { "label": "区域", "description": "AWS 需填写 Region，如 us-east-1；阿里云 OSS、腾讯云 COS、MinIO 可留空（区域已包含在端点中），留空时默认 us-east-1。" },
             "base_path": { "label": "基础路径", "description": "映射为文件系统根的对象前缀；/ 表示整个存储桶，例如 /project/assets。" },
-            "addressing_style": { "label": "寻址方式" },
+            "addressing_style": { "label": "寻址方式", "description": "MinIO 等自建服务建议选择 Path-style；阿里云 OSS、腾讯云 COS 建议选择 Virtual-hosted；不确定就保持自动。", "options": { "auto": "自动（推荐）", "path": "Path-style（路径式）", "virtual": "Virtual-hosted（虚拟主机式）" } },
             "aws_dualstack": { "label": "AWS 双栈端点", "description": "启用 AWS IPv4/IPv6 双栈端点。默认关闭，避免将标准 AWS 端点改写为 dualstack；不影响其他 S3 兼容服务。" },
-            "bucket": { "label": "存储桶", "description": "可选。留空后连接即可列出所有存储桶。" },
-            "access_key": { "label": "访问密钥" },
-            "secret_key": { "label": "秘密密钥" },
-            "session_token": { "label": "会话令牌", "description": "STS 或临时 IAM 凭据的可选令牌。" }
+            "bucket": { "label": "存储桶", "description": "可选。填写桶名则本连接只管理该桶；留空则连接后列出凭据可见的所有桶，再进入具体桶浏览。" },
+            "access_key": { "label": "访问密钥 ID" },
+            "secret_key": { "label": "访问密钥 Secret" },
+            "session_token": { "label": "会话令牌", "description": "STS 或临时 IAM 凭据的可选令牌（Session Token）。" }
           }
         },
         "io.github.t8y2.s3.workbench": {
