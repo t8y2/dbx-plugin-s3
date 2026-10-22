@@ -30,7 +30,7 @@
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
       folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path (or double-click the path)", rootLabel: "S3", details: "Details", close: "Close", pathNotFound: "Path not found: {uri}",
-      filter: "Filter buckets and files", clearFilter: "Clear filter", clipboardUpload: "Upload clipboard image", clipboardUnavailable: "Clipboard image upload requires a newer DBX desktop host.", clipboardEmpty: "The clipboard does not contain an image.", clipboardUploaded: "Clipboard image uploaded", clipboardMarkdown: "Markdown", clipboardLinkExpires: "The generated link is valid for 24 hours.",
+      filter: "Search by prefix", filterHint: "Search the current folder only: match folders and files by name prefix (bucket names at the root list), e.g. docs/2024/report. Case-sensitive; navigating to another folder clears the search.", noMatch: "No files match this prefix.", clearFilter: "Clear filter", clipboardUpload: "Upload clipboard image", clipboardUnavailable: "Clipboard image upload requires a newer DBX desktop host.", clipboardEmpty: "The clipboard does not contain an image.", clipboardUploaded: "Clipboard image uploaded", clipboardMarkdown: "Markdown", clipboardLinkExpires: "The generated link is valid for 24 hours.",
       copyPath: "Copy path", copyLabel: "Copy", absolutePath: "Absolute path", relativePath: "Relative path (without bucket)", overwriteTitle: "Overwrite file", confirmOverwrite: "{name} already exists. Overwrite it?", confirmOverwriteHint: "Unless the bucket has versioning enabled, the previous content is replaced and cannot be restored.", overwrite: "Overwrite",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
       uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version when bucket versioning is enabled; otherwise you will be asked whether to overwrite.",
@@ -43,7 +43,7 @@
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
       folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径（或双击路径栏）", rootLabel: "S3", details: "详细信息", close: "关闭", pathNotFound: "未找到路径：{uri}",
-      filter: "筛选桶名和文件名", clearFilter: "清除筛选", clipboardUpload: "上传剪贴板图片", clipboardUnavailable: "剪贴板图片上传需要更新版本的 DBX 桌面端。", clipboardEmpty: "剪贴板中没有图片。", clipboardUploaded: "剪贴板图片已上传", clipboardMarkdown: "Markdown", clipboardLinkExpires: "生成的链接有效期为 24 小时。",
+      filter: "按前缀搜索", filterHint: "只搜索当前文件夹：按名称前缀匹配文件夹和文件（桶列表页匹配桶名），例如输入 docs/2024/report。区分大小写，切换目录时自动清除。", noMatch: "没有匹配该前缀的文件。", clearFilter: "清除筛选", clipboardUpload: "上传剪贴板图片", clipboardUnavailable: "剪贴板图片上传需要更新版本的 DBX 桌面端。", clipboardEmpty: "剪贴板中没有图片。", clipboardUploaded: "剪贴板图片已上传", clipboardMarkdown: "Markdown", clipboardLinkExpires: "生成的链接有效期为 24 小时。",
       copyPath: "复制路径", copyLabel: "复制", absolutePath: "绝对路径", relativePath: "相对路径（不含桶）", overwriteTitle: "覆盖文件", confirmOverwrite: "文件「{name}」已存在，确定覆盖吗？", confirmOverwriteHint: "桶未开启版本管理时，覆盖后原内容无法恢复。", overwrite: "覆盖",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
       uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传在存储桶启用版本管理时自动创建新版本，否则会询问是否覆盖。",
@@ -283,6 +283,10 @@
 
   async function load(uri = currentUri, append = false) {
     if (!connectionId() || (append && !nextCursor)) return;
+    // A prefix search belongs to the folder it was typed in; carrying it
+    // into another folder makes every directory look empty. Console-style
+    // behavior: navigating resets the search, refreshing keeps it.
+    if (uri !== currentUri) filterQuery = "";
     if (loading) {
       if (!append) pendingLoadUri = uri;
       return;
@@ -1045,7 +1049,7 @@
       <Button variant="ghost" size="icon-sm" class="path-edit" aria-label={text.editPath} title={text.editPath} onmousedown={(event) => event.preventDefault()} onclick={() => (pathEditing ? cancelPathEdit() : beginPathEdit())}><Pencil size={13} /></Button>
     </div>
     <div class="toolbar-actions">
-      <label class="filter-box" title={text.filter}><Search size={13} /><input aria-label={text.filter} placeholder={text.filter} value={filterQuery} oninput={(event) => scheduleFilter(event.currentTarget.value)} />{#if filterQuery}<button type="button" aria-label={text.clearFilter} title={text.clearFilter} onclick={() => scheduleFilter("")}><X size={12} /></button>{/if}</label>
+      <label class="filter-box" title={text.filterHint}><Search size={13} /><input aria-label={text.filter} placeholder={text.filter} value={filterQuery} oninput={(event) => scheduleFilter(event.currentTarget.value)} />{#if filterQuery}<button type="button" aria-label={text.clearFilter} title={text.clearFilter} onclick={() => scheduleFilter("")}><X size={12} /></button>{/if}</label>
       {#if readOnly}<span class="readonly-badge" role="status" title={text.readOnlyTitle}><Lock size={12} />{text.readOnlyMode}</span>{/if}
       <Button variant="outline" size="icon-sm" aria-label={text.refresh} title={text.refresh} disabled={loading || operating} onclick={() => load(currentUri)}><RefreshCw size={14} /></Button>
       <Button variant="outline" size="sm" disabled={readOnly || loading || operating || (bucketMode && currentUri === "s3:/")} title={readOnly ? text.readOnlyTitle : undefined} onclick={createFolder}><FolderPlus size={14} />{text.newFolder}</Button>
@@ -1065,7 +1069,7 @@
       <div class="tree-panel"><FolderTree nodes={treeNodes} currentUri={currentUri} {text} rootLabel={text.rootLabel} onToggle={toggleTreeNode} onSelect={selectTreeNode} onLoadMore={continueTrees} /></div>
       <button class="tree-splitter" aria-label="Resize tree" onpointerdown={startTreeResize}></button>
     {/if}
-    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {focusTarget} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
+    <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {focusTarget} {text} filterActive={!!filterQuery.trim()} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
     <PreviewPane {selected} {preview} metadata={entryMetadata} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onDetails={showDetails} onSheetChange={(value) => (preview = value)} />
   </section>

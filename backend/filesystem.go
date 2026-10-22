@@ -49,13 +49,18 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 		limit = maxPageSize
 	}
 	cursor := decodeCursor(stringValue(values["cursor"]))
-	remotePrefix := connection.remoteKey(prefix)
-	remoteCursor := connection.remoteKey(cursor)
-	nameFilter := strings.ToLower(strings.TrimSpace(stringValue(values["filter"])))
-	// Folder trees want directories only, but S3 pages folders and files
-	// together; keep draining pages (bounded by a file-scan budget) and skip
-	// files so one request yields a full page of folders.
+	// A filter is a key prefix relative to the listed folder, matched
+	// server-side through S3's lexicographic key order: "docs/re" surfaces
+	// the docs/reports/ folder and docs/report.pdf alike. Keys are
+	// case-sensitive bytes, so matching is too — object-store consoles work
+	// the same way.
+	nameFilter := strings.Trim(strings.TrimSpace(stringValue(values["filter"])), "/")
 	directoriesOnly := boolValue(values["directoriesOnly"])
+	remotePrefix := connection.remoteKey(prefix)
+	if nameFilter != "" {
+		remotePrefix = connection.remoteKey(prefix + nameFilter)
+	}
+	remoteCursor := connection.remoteKey(cursor)
 	objects := listObjectsCompatible(context, connection.client, path.bucket, minio.ListObjectsOptions{Prefix: remotePrefix, Recursive: false, StartAfter: remoteCursor, MaxKeys: limit + 1})
 	listedObjects := make([]minio.ObjectInfo, 0, limit+1)
 	seenKeys := make(map[string]struct{}, limit+1)
@@ -70,22 +75,22 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 		if !ok || localKey == prefix {
 			continue
 		}
-		lastScanned = localKey
-		scannedKeys++
-		budgetReached := (directoriesOnly || nameFilter != "") && scannedKeys >= maxDirectoryScanKeys
-		if directoriesOnly && !strings.HasSuffix(localKey, "/") {
-			if budgetReached {
-				budgetExhausted = true
-				break
+		if directoriesOnly {
+			// Folder trees want directories only, but S3 pages folders and
+			// files together; keep draining pages (bounded by a scan budget)
+			// and skip files so one request yields a full page of folders.
+			lastScanned = localKey
+			scannedKeys++
+			if !strings.HasSuffix(localKey, "/") {
+				if scannedKeys >= maxDirectoryScanKeys {
+					budgetExhausted = true
+					break
+				}
+				continue
 			}
-			continue
 		}
 		entry := entryFromObject(minio.ObjectInfo{Key: localKey}, path.bucket)
-		if !validEntryName(entry.Name) || (nameFilter != "" && !strings.Contains(strings.ToLower(entry.Name), nameFilter)) {
-			if budgetReached {
-				budgetExhausted = true
-				break
-			}
+		if !validEntryName(entry.Name) {
 			continue
 		}
 		object.Key = localKey
@@ -97,7 +102,7 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 		if len(listedObjects) >= limit+1 {
 			break
 		}
-		if budgetReached {
+		if directoriesOnly && scannedKeys >= maxDirectoryScanKeys {
 			budgetExhausted = true
 			break
 		}
@@ -114,7 +119,9 @@ func (plugin *plugin) listObjects(values map[string]any) (any, *dbxpluginsdk.Plu
 		// The scan budget ran out mid-page; resume after the last key examined.
 		result["nextCursor"] = encodeCursor(lastScanned)
 	} else if path.key != "" && !directoriesOnly && len(entries) == 0 {
-		if nameFilter != "" && lastScanned != "" {
+		if nameFilter != "" {
+			// A search with no hits says nothing about whether the folder
+			// itself exists; never probe the filtered prefix as a path.
 			result["exists"] = true
 			return result, nil
 		}
@@ -133,7 +140,9 @@ func (plugin *plugin) listBuckets(context context.Context, connection *s3Connect
 		limit = defaultPageSize
 	}
 	cursor := decodeCursor(stringValue(values["cursor"]))
-	nameFilter := strings.ToLower(strings.TrimSpace(stringValue(values["filter"])))
+	// Bucket names are lowercase by S3 naming rules, so a case-insensitive
+	// prefix stays forgiving without ever producing false hits.
+	nameFilter := strings.TrimSpace(stringValue(values["filter"]))
 	buckets, err := connection.client.ListBuckets(context)
 	if err != nil {
 		return nil, remoteError("S3 bucket listing failed: " + err.Error())
@@ -141,7 +150,7 @@ func (plugin *plugin) listBuckets(context context.Context, connection *s3Connect
 	sort.Slice(buckets, func(left, right int) bool { return buckets[left].Name < buckets[right].Name })
 	entries := make([]filesystemEntry, 0, minInt(limit, len(buckets)))
 	for _, bucket := range buckets {
-		if bucket.Name <= cursor || !validEntryName(bucket.Name) || (nameFilter != "" && !strings.Contains(strings.ToLower(bucket.Name), nameFilter)) {
+		if bucket.Name <= cursor || !validEntryName(bucket.Name) || (nameFilter != "" && !strings.HasPrefix(strings.ToLower(bucket.Name), strings.ToLower(nameFilter))) {
 			continue
 		}
 		entries = append(entries, filesystemEntry{

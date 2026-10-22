@@ -2,7 +2,7 @@
   import FileIcon from "./FileIcon.svelte";
   import { formatObjectModified, formatObjectSize } from "../lib/object-metadata.js";
 
-  let { entries = [], selected = null, checkedUris = [], loading = false, nextCursor = "", focusTarget = null, text, onSelect, onOpen, onContextMenu, onBackgroundContextMenu, onLoadMore, onToggleCheck, onToggleCheckAll } = $props();
+  let { entries = [], selected = null, checkedUris = [], loading = false, nextCursor = "", focusTarget = null, text, filterActive = false, onSelect, onOpen, onContextMenu, onBackgroundContextMenu, onLoadMore, onToggleCheck, onToggleCheckAll } = $props();
   let listElement = $state(null);
   let loadMoreSentinel = $state(null);
   let sentinelVisible = false;
@@ -60,7 +60,7 @@
 
 <div class="list-panel" role="group" bind:this={listElement} onscroll={handleListScroll} oncontextmenu={(event) => { event.preventDefault(); if (!event.target.closest(".entry-row")) onBackgroundContextMenu?.(event); }}>
   {#if loading && !entries.length}<div class="empty loading-state"><span class="spinner" aria-hidden="true"></span>{text.loading}</div>
-  {:else if !entries.length}<div class="empty">{text.empty}</div>
+  {:else if !entries.length}<div class="empty">{filterActive ? text.noMatch : text.empty}</div>
   {:else}
     <div class="list-header">
       <button type="button" class="list-check" role="checkbox" aria-checked={headerCheckState} aria-label={text.file} disabled={loading} onclick={() => onToggleCheckAll?.()}>

@@ -582,12 +582,34 @@ func testFilesystemLifecycle(t *testing.T, basePath string) {
 	if len(list["entries"].([]filesystemEntry)) != 2 {
 		t.Fatal("listing exposed objects outside the configured base path")
 	}
-	filtered, pluginError := invokeIntegration(t, plugin, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3:/", "limit": 20, "filter": "ROOT"}))
+	// Prefix search is case-sensitive: "ROOT" must miss "root.txt".
+	caseMiss, pluginError := invokeIntegration(t, plugin, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3:/", "limit": 20, "filter": "ROOT"}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if len(caseMiss["entries"].([]filesystemEntry)) != 0 {
+		t.Fatalf("prefix search must be case-sensitive: %#v", caseMiss)
+	}
+	filtered, pluginError := invokeIntegration(t, plugin, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3:/", "limit": 20, "filter": "root"}))
 	if pluginError != nil {
 		t.Fatal(pluginError.Message)
 	}
 	if len(filtered["entries"].([]filesystemEntry)) != 1 || !containsEntry(filtered, "root.txt", "file") {
 		t.Fatalf("unexpected filtered listing: %#v", filtered)
+	}
+	filteredFolder, pluginError := invokeIntegration(t, plugin, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3:/", "limit": 20, "filter": "fol"}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if len(filteredFolder["entries"].([]filesystemEntry)) != 1 || !containsEntry(filteredFolder, "folder", "directory") {
+		t.Fatalf("unexpected folder prefix listing: %#v", filteredFolder)
+	}
+	filteredNested, pluginError := invokeIntegration(t, plugin, "filesystem/list", mergeIntegration(base, map[string]any{"uri": "s3:/", "limit": 20, "filter": "folder/nest"}))
+	if pluginError != nil {
+		t.Fatal(pluginError.Message)
+	}
+	if len(filteredNested["entries"].([]filesystemEntry)) != 1 || !containsEntry(filteredNested, "nested.txt", "file") {
+		t.Fatalf("unexpected nested prefix listing: %#v", filteredNested)
 	}
 	for _, entry := range list["entries"].([]filesystemEntry) {
 		if entry.URI != objectURI(bucket, "root.txt") && entry.URI != objectURI(bucket, "folder/") {
