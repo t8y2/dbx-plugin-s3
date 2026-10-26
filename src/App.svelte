@@ -10,7 +10,7 @@
   import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
   import { formatObjectModified, formatObjectSize, prettyJsonText, sortEntriesDirectoryFirst } from "./lib/object-metadata.js";
   import { TREE_ROOT, baseNameOfUri, displayUri, normalizePathInput as normalizePathInputFrom, parentOfUri, sameEntryUri } from "./lib/path-navigation.js";
-  import { ArrowUp, ChevronRight, ClipboardPaste, Copy, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, Pencil, RefreshCw, Search, Trash2, Upload, X } from "@lucide/svelte";
+  import { ArrowUp, ChevronRight, ClipboardPaste, Copy, Download, FileArchive, FolderOpen, FolderPlus, FolderUp, History, Link2, ListTree, Lock, PanelRight, Pencil, RefreshCw, Search, Trash2, Upload, X } from "@lucide/svelte";
   // The host inlines only the top-level script into the sandbox document, so
   // dynamic imports resolve against tauri.localhost and 404; preview parsers
   // must ship inside the main bundle.
@@ -29,7 +29,7 @@
       truncated: "Preview is truncated.", error: "Error", connection: "Connection", type: "Type",
       markdown: "Markdown", word: "Word document", spreadsheet: "Spreadsheet", sheet: "Sheet", noSheets: "No worksheets found.", noConnection: "No connection", file: "File", folder: "Folder", newFolder: "New folder", upload: "Upload", download: "Download", rename: "Rename", delete: "Delete", deleteCount: "Delete {count} items", confirm: "Confirm", cancel: "Cancel", folderName: "Folder name", newName: "New name", confirmDelete: "Delete {name}?", confirmDeleteCount: "Delete {count} items? This cannot be undone.", cannotDeleteBucket: "Buckets cannot be deleted from here.", invalidName: "Enter a valid name.", uploadLimit: "Files must be 4 MiB or smaller.", operationFailed: "Operation failed",
       share: "Share", shareExpires: "Link validity", shareExpiresHour: "1 hour", shareExpiresDay: "24 hours", shareExpiresWeek: "7 days", copy: "Copy link", copied: "Copied", copyBlocked: "Auto-copy was blocked — the link is selected, press ⌘C / Ctrl+C to copy.", shareFailed: "Could not create the share link.",
-      folderTree: "Folder tree", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path (or double-click the path)", rootLabel: "S3", details: "Details", close: "Close", pathNotFound: "Path not found: {uri}",
+      folderTree: "Folder tree", previewPane: "Preview panel", expandFolder: "Expand folder", collapseFolder: "Collapse folder", loadMore: "Load more", noFolders: "No folders.", editPath: "Edit path (or double-click the path)", rootLabel: "S3", details: "Details", close: "Close", pathNotFound: "Path not found: {uri}",
       filter: "Filter buckets and files", clearFilter: "Clear filter", clipboardUpload: "Upload clipboard image", clipboardUnavailable: "Clipboard image upload requires a newer DBX desktop host.", clipboardEmpty: "The clipboard does not contain an image.", clipboardUploaded: "Clipboard image uploaded", clipboardMarkdown: "Markdown", clipboardLinkExpires: "The generated link is valid for 24 hours.",
       copyPath: "Copy path", copyLabel: "Copy", absolutePath: "Absolute path", relativePath: "Relative path (without bucket)", overwriteTitle: "Overwrite file", confirmOverwrite: "{name} already exists. Overwrite it?", confirmOverwriteHint: "Unless the bucket has versioning enabled, the previous content is replaced and cannot be restored.", overwrite: "Overwrite",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
@@ -42,7 +42,7 @@
       truncated: "预览内容已截断。", error: "错误", connection: "连接", type: "类型",
       markdown: "Markdown", word: "Word 文档", spreadsheet: "电子表格", sheet: "工作表", noSheets: "未找到工作表。", noConnection: "未连接", file: "文件", folder: "文件夹", newFolder: "新建文件夹", upload: "上传", download: "下载", rename: "重命名", delete: "删除", deleteCount: "删除 {count} 项", confirm: "确定", cancel: "取消", folderName: "文件夹名称", newName: "新名称", confirmDelete: "确定删除 {name} 吗？", confirmDeleteCount: "确定删除 {count} 项吗？删除后无法恢复。", cannotDeleteBucket: "不支持在此删除存储桶。", invalidName: "请输入有效名称。", uploadLimit: "文件不能超过 4 MiB。", operationFailed: "操作失败",
       share: "分享", shareExpires: "链接有效期", shareExpiresHour: "1 小时", shareExpiresDay: "24 小时", shareExpiresWeek: "7 天", copy: "复制链接", copied: "已复制", copyBlocked: "自动复制被拦截,已全选链接,请按 ⌘C / Ctrl+C 复制。", shareFailed: "生成分享链接失败。",
-      folderTree: "目录树", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径（或双击路径栏）", rootLabel: "S3", details: "详细信息", close: "关闭", pathNotFound: "未找到路径：{uri}",
+      folderTree: "目录树", previewPane: "预览面板", expandFolder: "展开文件夹", collapseFolder: "折叠文件夹", loadMore: "加载更多", noFolders: "暂无文件夹。", editPath: "编辑路径（或双击路径栏）", rootLabel: "S3", details: "详细信息", close: "关闭", pathNotFound: "未找到路径：{uri}",
       filter: "筛选桶名和文件名", clearFilter: "清除筛选", clipboardUpload: "上传剪贴板图片", clipboardUnavailable: "剪贴板图片上传需要更新版本的 DBX 桌面端。", clipboardEmpty: "剪贴板中没有图片。", clipboardUploaded: "剪贴板图片已上传", clipboardMarkdown: "Markdown", clipboardLinkExpires: "生成的链接有效期为 24 小时。",
       copyPath: "复制路径", copyLabel: "复制", absolutePath: "绝对路径", relativePath: "相对路径（不含桶）", overwriteTitle: "覆盖文件", confirmOverwrite: "文件「{name}」已存在，确定覆盖吗？", confirmOverwriteHint: "桶未开启版本管理时，覆盖后原内容无法恢复。", overwrite: "覆盖",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
@@ -69,6 +69,7 @@
   let treeNodes = $state({});
   let treeVisible = $state(false);
   let treeWidth = $state(192);
+  let previewCollapsed = $state(false);
   let filterQuery = $state("");
   let filterTimer;
   let pendingLoadUri = "";
@@ -110,6 +111,29 @@
   const connectionId = () => context?.connectionId || "";
   const isZh = () => (window.dbxPlugin?.locale || "en").toLowerCase().startsWith("zh");
   const decode = (value) => window.dbxPlugin.decodeBase64(value);
+
+  // Layout prefs persist through host.storage when the host offers it; every
+  // access is defensive so a missing capability only loses the convenience.
+  const canPersistUi = () => !!window.dbxPlugin?.capabilities?.storage && typeof window.dbxPlugin?.storage?.get === "function" && typeof window.dbxPlugin?.storage?.set === "function";
+  async function loadUiPrefs() {
+    if (!canPersistUi()) return;
+    try {
+      const raw = await window.dbxPlugin.storage.get("ui.layout");
+      const prefs = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!prefs || typeof prefs !== "object") return;
+      if (Number.isFinite(prefs.leftWidth)) leftWidth = Math.min(70, Math.max(24, prefs.leftWidth));
+      if (Number.isFinite(prefs.treeWidth)) treeWidth = Math.min(420, Math.max(140, prefs.treeWidth));
+      if (typeof prefs.treeVisible === "boolean") treeVisible = prefs.treeVisible;
+      if (typeof prefs.previewCollapsed === "boolean") previewCollapsed = prefs.previewCollapsed;
+    } catch { /* unreadable prefs: keep defaults */ }
+  }
+  function saveUiPrefs() {
+    if (!canPersistUi()) return;
+    try {
+      const result = window.dbxPlugin.storage.set("ui.layout", JSON.stringify({ leftWidth, previewCollapsed, treeVisible, treeWidth }));
+      if (result?.catch) result.catch(() => undefined);
+    } catch { /* storage unavailable */ }
+  }
 
   function treeAncestors(uri) {
     const parts = uri.replace(/^s3:\/*/, "").split("/").filter(Boolean);
@@ -335,6 +359,9 @@
     previewReader = undefined;
     selected = entry;
     entryMetadata = null;
+    // A collapsed pane shows nothing, so skip the preview work entirely;
+    // expanding re-selects the current row to load it.
+    if (previewCollapsed) return;
     if (entry.kind === "directory" || entry.kind === "bucket") {
       preview = { kind: "empty", value: "", type: text.folder, truncated: false };
       return;
@@ -408,6 +435,7 @@
   function openEntry(entry) {
     contextMenu = null;
     if (entry.kind === "directory" || entry.kind === "bucket") void load(entry.uri);
+    else if (previewCollapsed) { previewCollapsed = false; saveUiPrefs(); void selectEntry(entry); }
   }
 
   function openContextMenu(event, entry) {
@@ -1004,6 +1032,7 @@
     window.dbxPlugin.ready.then((value) => {
       context = value || {};
       text = isZh() ? copy.zh : copy.en;
+      void loadUiPrefs();
       load("s3:/");
     });
     // Dark theming arrives as host CSS variables, not a color-scheme switch;
@@ -1020,14 +1049,15 @@
   onDestroy(() => { clearTimeout(filterTimer); uploadController?.abort(); downloadController?.abort(); releasePreviewUrl(); });
 </script>
 
-<svelte:window onclick={closeContextMenu} oncontextmenu={(event) => event.preventDefault()} onkeydown={(event) => event.key === "Escape" && closeContextMenu()} />
+<svelte:window onclick={closeContextMenu} oncontextmenu={(event) => event.preventDefault()} onkeydown={(event) => { if (event.key !== "Escape") return; if (contextMenu) { closeContextMenu(); return; } if (!dialogOpen && selected) clearPreview(); }} />
 
 <svelte:head><title>S3</title></svelte:head>
 
 <main>
   <div class="toolbar">
     <div class="path-group">
-      <Button variant="outline" size="icon-sm" aria-pressed={treeVisible} aria-label={text.folderTree} title={text.folderTree} onclick={() => (treeVisible = !treeVisible)}><ListTree size={14} /></Button>
+      <Button variant="outline" size="icon-sm" aria-pressed={treeVisible} aria-label={text.folderTree} title={text.folderTree} onclick={() => { treeVisible = !treeVisible; saveUiPrefs(); }}><ListTree size={14} /></Button>
+      <Button variant="outline" size="icon-sm" aria-pressed={!previewCollapsed} aria-label={text.previewPane} title={text.previewPane} onclick={() => { previewCollapsed = !previewCollapsed; if (previewCollapsed) releasePreviewUrl(); else if (selected) void selectEntry(selected); saveUiPrefs(); }}><PanelRight size={14} /></Button>
       <Button variant="outline" size="icon-sm" aria-label={text.up} title={text.up} disabled={!parentUri() || loading} onclick={() => load(parentUri())}><ArrowUp size={14} /></Button>
       {#if pathEditing}
         <input aria-label={text.path} bind:value={pathDraft} bind:this={pathInput} onkeydown={(event) => {
@@ -1060,14 +1090,14 @@
   </div>
   {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.saving ? text.saving : transfer.confirming ? text.confirmingUpload : transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span><Button variant="ghost" size="sm" disabled={transfer.saving} onclick={() => (transfer.kind === "upload" ? uploadController : downloadController)?.abort()}>{text.cancel}</Button></div>{/if}
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
-  <section class="split" style={`grid-template-columns: ${treeVisible ? `${treeWidth}px 6px minmax(220px, ${leftWidth}fr) 6px minmax(280px, ${100 - leftWidth}fr)` : `minmax(240px, ${leftWidth}%) 6px minmax(280px, 1fr)`}`}>
+  <section class="split" style={`grid-template-columns: ${treeVisible ? (previewCollapsed ? `${treeWidth}px 6px minmax(220px, 1fr)` : `${treeWidth}px 6px minmax(220px, ${leftWidth}fr) 6px minmax(280px, ${100 - leftWidth}fr)`) : previewCollapsed ? "1fr" : `minmax(240px, ${leftWidth}%) 6px minmax(280px, 1fr)`}`}>
     {#if treeVisible}
       <div class="tree-panel"><FolderTree nodes={treeNodes} currentUri={currentUri} {text} rootLabel={text.rootLabel} onToggle={toggleTreeNode} onSelect={selectTreeNode} onLoadMore={continueTrees} /></div>
       <button class="tree-splitter" aria-label="Resize tree" onpointerdown={startTreeResize}></button>
     {/if}
     <ObjectList {entries} {selected} {checkedUris} {loading} {nextCursor} {focusTarget} {text} onSelect={selectEntry} onOpen={openEntry} onContextMenu={openContextMenu} onBackgroundContextMenu={(event) => openContextMenu(event, null)} onLoadMore={() => load(currentUri, true)} onToggleCheck={toggleCheck} onToggleCheckAll={toggleCheckAll} />
-    <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
-    <PreviewPane {selected} {preview} metadata={entryMetadata} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onDetails={showDetails} onSheetChange={(value) => (preview = value)} />
+    {#if !previewCollapsed}<button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>{/if}
+    {#if !previewCollapsed}<PreviewPane {selected} {preview} metadata={entryMetadata} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onDetails={showDetails} onSheetChange={(value) => (preview = value)} />{/if}
   </section>
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
