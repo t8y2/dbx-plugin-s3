@@ -1,3 +1,5 @@
+import { TREE_ROOT, normalizePathInput } from "./path-navigation.js";
+
 export const inlineUploadBytes = 256 * 1024;
 const chunkBytes = 1024 * 1024;
 
@@ -11,6 +13,25 @@ export function uploadPathTarget(parent, path) {
     throw new Error(`Invalid upload path: ${path}`);
   }
   return `${parent.endsWith("/") ? parent : `${parent}/`}${segments.map(encodeURIComponent).join("/")}`;
+}
+
+// The editable draft prefilled in the upload dialog: the current folder as
+// readable text, without scheme or trailing slash ("s3://bucket/a%20b/" ->
+// "bucket/a%20b"; the dialog decodes it for display).
+export function uploadTargetDraft(uri) {
+  return String(uri || "").replace(/^s3:\/*/, "").replace(/\/+$/, "");
+}
+
+// Resolves the dialog draft into the upload base URI, percent-encoded to match
+// the entry URIs the backend returns (so the post-upload folder refresh still
+// recognizes the target). Free-roaming connections need a bucket in the draft;
+// a bucket-scoped connection may stay empty to target the bucket root.
+export function resolveUploadTarget(draft, { bucketScoped = false, scopedBucket = "" } = {}) {
+  const target = normalizePathInput(draft, { bucketScoped, scopedBucket });
+  if (target === TREE_ROOT) return bucketScoped ? TREE_ROOT : null;
+  const prefix = target.startsWith("s3://") ? "s3://" : "s3:/";
+  const segments = target.slice(prefix.length).split("/").filter(Boolean).map(encodeURIComponent);
+  return segments.length ? `${prefix}${segments.join("/")}/` : bucketScoped ? TREE_ROOT : null;
 }
 
 function checkCancelled(signal) {

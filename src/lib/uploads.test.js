@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inlineUploadBytes, uploadFile, uploadPathTarget, uploadTarget } from "./uploads.js";
+import { inlineUploadBytes, resolveUploadTarget, uploadFile, uploadPathTarget, uploadTarget, uploadTargetDraft } from "./uploads.js";
 
 test("folder targets preserve hierarchy, Unicode, reserved characters and the root folder", () => {
   assert.equal(uploadTarget("s3://bucket/base/", { name: "a #%.txt", webkitRelativePath: "资料/子目录/a #%.txt" }), "s3://bucket/base/%E8%B5%84%E6%96%99/%E5%AD%90%E7%9B%AE%E5%BD%95/a%20%23%25.txt");
@@ -9,6 +9,26 @@ test("folder targets preserve hierarchy, Unicode, reserved characters and the ro
     assert.throws(() => uploadTarget("s3://bucket/", { webkitRelativePath: path }), /Invalid upload path/);
   }
   assert.equal(uploadPathTarget("s3://bucket/base/", "screenshots/2026/09/26/a.png"), "s3://bucket/base/screenshots/2026/09/26/a.png");
+});
+
+test("upload dialog drafts strip the scheme and trailing slash", () => {
+  assert.equal(uploadTargetDraft("s3://bucket/a%20b/"), "bucket/a%20b");
+  assert.equal(uploadTargetDraft("s3:/资料/2026/"), "资料/2026");
+  assert.equal(uploadTargetDraft("s3:/"), "");
+});
+
+test("upload targets resolve from the editable draft into encoded base URIs", () => {
+  assert.equal(resolveUploadTarget("s3://bucket/base/", { bucketScoped: false }), "s3://bucket/base/");
+  assert.equal(resolveUploadTarget("  /bucket/a b ", { bucketScoped: false }), "s3://bucket/a%20b/");
+  assert.equal(resolveUploadTarget("资料/2026/子 目录", { bucketScoped: false }), "s3://%E8%B5%84%E6%96%99/2026/%E5%AD%90%20%E7%9B%AE%E5%BD%95/");
+  assert.equal(resolveUploadTarget("bucket", { bucketScoped: false }), "s3://bucket/");
+  // Bucket-scoped connections tolerate the pinned bucket in the draft and may
+  // stay empty to target the bucket root.
+  assert.equal(resolveUploadTarget("bucket/base/", { bucketScoped: true, scopedBucket: "bucket" }), "s3:/base/");
+  assert.equal(resolveUploadTarget("", { bucketScoped: true, scopedBucket: "bucket" }), "s3:/");
+  // Free-roaming connections have no bucket to land in without a path.
+  assert.equal(resolveUploadTarget("", { bucketScoped: false }), null);
+  assert.equal(resolveUploadTarget(" / ", { bucketScoped: false }), null);
 });
 
 test("small and empty files request a new version without bypassing overwrite protection", async () => {

@@ -5,7 +5,9 @@
   import FolderTree from "./components/FolderTree.svelte";
   import { Button } from "./lib/components/ui/button/index.js";
   import * as Dialog from "./lib/components/ui/dialog/index.js";
-  import { inlineUploadBytes, uploadFile, uploadPathTarget, uploadTarget } from "./lib/uploads.js";
+  import { inlineUploadBytes, resolveUploadTarget, uploadFile, uploadPathTarget, uploadTarget, uploadTargetDraft } from "./lib/uploads.js";
+  import { collectDroppedFiles } from "./lib/drag-drop.js";
+  import { mapWithConcurrency } from "./lib/concurrency.js";
   import { clipboardImageMarkdown, clipboardImagePath } from "./lib/clipboard-image.js";
   import { maxDownloadBytes, readDownload, saveDownload } from "./lib/downloads.js";
   import { formatObjectModified, formatObjectSize, prettyJsonText, sortEntriesDirectoryFirst } from "./lib/object-metadata.js";
@@ -34,6 +36,8 @@
       copyPath: "Copy path", copyLabel: "Copy", absolutePath: "Absolute path", relativePath: "Relative path (without bucket)", overwriteTitle: "Overwrite file", confirmOverwrite: "{name} already exists. Overwrite it?", confirmOverwriteHint: "Unless the bucket has versioning enabled, the previous content is replaced and cannot be restored.", overwrite: "Overwrite",
       readOnlyMode: "Read-only", readOnlyTitle: "This connection is marked read-only in DBX; uploads, deletes, renames, and folder creation are disabled.",
       uploadFolder: "Upload folder", folderUploadHint: "Preserves the selected folder and nested files. Empty folders are omitted by the browser.", uploadCancelled: "Upload cancelled. Completed files are kept.", confirmingUpload: "Waiting for storage confirmation…", versions: "Versions", noVersions: "No versions found.", latestVersion: "Latest", deletedVersion: "Delete marker", versionsTruncated: "Showing the first 1,000 versions.", versionUploadHint: "Same-name uploads create a new version when bucket versioning is enabled; otherwise you will be asked whether to overwrite.",
+      dropUpload: "Drop files or folders here to upload", overwriteAll: "Overwrite all", skipFile: "Skip", skipAll: "Skip all", uploadQueue: "Upload queue", uploadFinished: "Upload finished: {done} succeeded, {skipped} skipped, {failed} failed.", statusPending: "Pending", statusDone: "Done", statusFailed: "Failed", statusSkipped: "Skipped", statusCancelled: "Cancelled",
+      uploadTo: "Upload to", selectedFiles: "{count} files · {size}", uploadTargetRequired: "Enter a target path starting with the bucket name.", uploadTargetHint: "Missing folders are created automatically, so the path may point anywhere in the bucket.",
     },
     zh: {
       locale: "zh-CN", size: "大小", modified: "修改时间", modifiedHint: "S3 最后修改时间（上传或覆盖），按本地时区显示。", saving: "正在保存",
@@ -47,6 +51,8 @@
       copyPath: "复制路径", copyLabel: "复制", absolutePath: "绝对路径", relativePath: "相对路径（不含桶）", overwriteTitle: "覆盖文件", confirmOverwrite: "文件「{name}」已存在，确定覆盖吗？", confirmOverwriteHint: "桶未开启版本管理时，覆盖后原内容无法恢复。", overwrite: "覆盖",
       readOnlyMode: "只读", readOnlyTitle: "此连接已在 DBX 中标记为只读，上传、删除、重命名和新建文件夹已被禁用。",
       uploadFolder: "上传文件夹", folderUploadHint: "保留所选文件夹及嵌套文件的路径。浏览器不会包含空文件夹。", uploadCancelled: "上传已取消，已完成的文件会保留。", confirmingUpload: "等待存储服务确认…", versions: "版本历史", noVersions: "未找到历史版本。", latestVersion: "最新", deletedVersion: "删除标记", versionsTruncated: "仅显示前 1,000 个版本。", versionUploadHint: "同名上传在存储桶启用版本管理时自动创建新版本，否则会询问是否覆盖。",
+      dropUpload: "松开鼠标，上传文件或文件夹", overwriteAll: "全部覆盖", skipFile: "跳过", skipAll: "全部跳过", uploadQueue: "上传队列", uploadFinished: "上传完成：成功 {done} 个，跳过 {skipped} 个，失败 {failed} 个。", statusPending: "等待中", statusDone: "完成", statusFailed: "失败", statusSkipped: "已跳过", statusCancelled: "已取消",
+      uploadTo: "上传至", selectedFiles: "{count} 个文件 · {size}", uploadTargetRequired: "请输入以桶名开头的目标路径。", uploadTargetHint: "目录不存在时会自动创建，可填写桶内任意路径。",
     },
   };
 
@@ -63,6 +69,11 @@
   let loading = $state(false);
   let operating = $state(false);
   let error = $state("");
+  let notice = $state("");
+  let dragDepth = $state(0);
+  let uploadQueue = $state([]);
+  let uploadPanelOpen = $state(false);
+  let uploadSeq = 0;
   let checkedUris = $state([]);
   let transfer = $state(null);
   let leftWidth = $state(42);
@@ -84,6 +95,10 @@
   let focusSeq = 0;
   let uploadInput = $state(null);
   let folderUploadInput = $state(null);
+  let uploadTargetInput = $state(null);
+  // Files chosen through the picker or a drop await the upload dialog's
+  // target path.
+  let pendingUpload = $state(null);
   let uploadController;
   let downloadController;
   let dialog = $state(null);
@@ -289,6 +304,7 @@
     }
     loading = true;
     error = "";
+    notice = "";
     try {
       const result = await invoke("filesystem/list", { uri, cursor: append ? nextCursor : undefined, limit: 200, filter: filterQuery.trim() || undefined });
       const incoming = result?.entries || [];
@@ -523,65 +539,188 @@
     uploadInput?.click();
   }
 
-  async function uploadFiles(event) {
+  // Files picked through the inputs and files dropped onto the window all
+  // funnel into one confirm dialog: the prefilled "upload to" path can be
+  // edited to any folder, so users never navigate to the target first.
+  function openUploadDialog(files, folder) {
+    if (!files.length || readOnly || operating) return;
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    pendingUpload = { files };
+    dialog = { kind: "upload", value: displayUri(uploadTargetDraft(currentUri)), count: files.length, size: totalBytes, folder: folder || files.some((file) => file.webkitRelativePath), error: "" };
+    dialogOpen = true;
+    // The dialog body mounts through a portal; focus lands once it has painted.
+    void tick().then(() => requestAnimationFrame(() => { uploadTargetInput?.focus(); uploadTargetInput?.select(); }));
+  }
+
+  async function uploadFiles(event, folder) {
     const input = event.currentTarget;
     const files = [...(input.files || [])];
     input.value = "";
-    await uploadItems(files);
+    openUploadDialog(files, folder);
   }
 
-  async function uploadItems(files, targetForFile) {
+  async function confirmUploadTarget() {
+    const active = dialog;
+    const upload = pendingUpload;
+    if (active?.kind !== "upload" || !upload) return;
+    const uploadUri = resolveUploadTarget(active.value, { bucketScoped, scopedBucket });
+    if (!uploadUri) {
+      active.error = text.uploadTargetRequired;
+      return;
+    }
+    cancelDialog();
+    await uploadItems(upload.files, undefined, uploadUri);
+  }
+
+  async function uploadItems(files, targetForFile, targetBaseUri) {
     if (!files.length || readOnly || operating) return;
+    notice = "";
     // Pin the target folder up front: a multi-file upload runs for a while
     // and later files must land next to the first, not in whatever folder
     // the user is browsing by then.
-    const uploadUri = currentUri;
+    const uploadUri = targetBaseUri || currentUri;
     const uploadConnection = connectionId();
     const uploadInvoke = (method, params, options) => window.dbxPlugin.invoke(method, { ...params, connectionId: uploadConnection, providerId }, options);
-    const canStream = typeof window.dbxPlugin?.sendBinary === "function";
+    uploadPanelOpen = true;
     return runOperation(async () => {
       const controller = new AbortController();
       uploadController = controller;
-      const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-      transfer = { kind: "upload", name: "", sent: 0, total: totalBytes, fileIndex: 0, fileCount: files.length };
-      let completedBytes = 0;
-      const uploadedUris = [];
-      try {
-        for (const file of files) {
-          transfer.fileIndex += 1;
-          transfer.name = file.webkitRelativePath || file.name;
-          transfer.sent = completedBytes;
-          if (file.size > inlineUploadBytes && !canStream) throw new Error(text.uploadLargeUnavailable);
-          const targetUri = targetForFile ? targetForFile(file) : uploadTarget(uploadUri, file);
-          const uploadOnce = (overwrite = false) => uploadFile(file, {
-            uri: targetUri, invoke: uploadInvoke, overwrite,
-            sendBinary: (channel, bytes) => window.dbxPlugin.sendBinary(channel, bytes),
-            encodeBase64: (bytes) => window.dbxPlugin.encodeBase64(bytes), signal: controller.signal,
-            onProgress: (processed, confirming) => { transfer.sent = completedBytes + processed; transfer.confirming = confirming; },
+      uploadSeq += 1;
+      uploadQueue = files.map((file) => ({
+        id: `${uploadSeq}-${file.webkitRelativePath || file.name}`,
+        file,
+        name: file.webkitRelativePath || file.name,
+        targetUri: targetForFile ? targetForFile(file) : uploadTarget(uploadUri, file),
+        status: "pending", sent: 0, confirming: false, error: "", overwrite: false, controller: null,
+      }));
+      transfer = { kind: "upload", name: "", sent: 0, total: uploadQueue.reduce((sum, item) => sum + item.file.size, 0), fileIndex: 0, fileCount: uploadQueue.length };
+      // Same-name conflicts pause whichever worker hit them first; an "all"
+      // answer applies to every remaining conflict, and skipping never
+      // aborts the rest of the batch.
+      let conflictMode = "";
+      let overwriteChain = Promise.resolve();
+      const askOverwrite = (name) => {
+        // Dialogs must not stack, so parallel workers queue up on this chain
+        // and prompt one at a time. A decision made while a prompt sits
+        // queued applies the moment its turn arrives.
+        const asked = overwriteChain.then(() => {
+          if (conflictMode === "skipAll") return "skip";
+          if (conflictMode === "overwriteAll") return "overwrite";
+          return new Promise((resolve) => {
+            dialog = { kind: "overwrite", name, resolve, batch: uploadQueue.length > 1 };
+            dialogOpen = true;
           });
+        });
+        overwriteChain = asked.then(() => undefined, () => undefined);
+        return asked;
+      };
+      const refreshAggregate = () => {
+        transfer.sent = uploadQueue.reduce((sum, item) => sum + (item.status === "done" || item.status === "skipped" ? item.file.size : Math.min(item.sent, item.file.size)), 0);
+        transfer.fileIndex = uploadQueue.filter((item) => item.status !== "pending" && item.status !== "uploading").length;
+        const active = uploadQueue.find((item) => item.status === "uploading");
+        transfer.name = active ? active.name : "";
+        transfer.confirming = !!active?.confirming;
+      };
+      const upload = (item, overwrite) => uploadFile(item.file, {
+        uri: item.targetUri, invoke: uploadInvoke, overwrite,
+        sendBinary: (channel, bytes) => window.dbxPlugin.sendBinary(channel, bytes),
+        encodeBase64: (bytes) => window.dbxPlugin.encodeBase64(bytes), signal: item.controller.signal,
+        onProgress: (processed, confirming) => { item.sent = processed; item.confirming = confirming; refreshAggregate(); },
+      });
+      const processItem = async (item) => {
+        if (controller.signal.aborted) { item.status = "cancelled"; return; }
+        item.status = "uploading";
+        item.sent = 0;
+        item.controller = new AbortController();
+        const onAbort = () => item.controller.abort();
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        try {
+          if (item.file.size > inlineUploadBytes && typeof window.dbxPlugin?.sendBinary !== "function") {
+            item.status = "failed";
+            item.error = text.uploadLargeUnavailable;
+            return;
+          }
           try {
-            await uploadOnce();
+            await upload(item, item.overwrite);
+            item.status = "done";
+            return;
           } catch (cause) {
             const message = cause?.message || String(cause);
+            if (item.controller.signal.aborted) { item.status = "cancelled"; return; }
             // Versioned buckets swallow same-name uploads as new versions;
             // everywhere else ask before replacing the existing object.
-            if (controller.signal.aborted || !message.startsWith("S3 object already exists")) throw cause;
-            const overwrite = await new Promise((resolve) => {
-              dialog = { kind: "overwrite", name: transfer.name, resolve };
-              dialogOpen = true;
-            });
-            if (!overwrite) throw cause;
-            await uploadOnce(true);
+            if (!message.startsWith("S3 object already exists")) {
+              item.status = "failed";
+              item.error = message;
+              return;
+            }
+            const decision = conflictMode === "skipAll" ? "skip" : await askOverwrite(item.name);
+            if (decision === "overwriteAll") conflictMode = "overwriteAll";
+            if (decision === "skipAll") conflictMode = "skipAll";
+            if (decision === "skip" || decision === "skipAll" || decision === false) {
+              // A skip choice (or closing the dialog) leaves the existing
+              // object untouched and moves on with the remaining files.
+              item.status = "skipped";
+              return;
+            }
+            item.overwrite = true;
+            await upload(item, true);
+            item.status = "done";
           }
-          completedBytes += file.size;
-          transfer.sent = completedBytes;
-          uploadedUris.push(targetUri);
+        } catch (cause) {
+          item.status = item.controller.signal.aborted ? "cancelled" : "failed";
+          item.error = cause?.message || String(cause);
+        } finally {
+          controller.signal.removeEventListener("abort", onAbort);
+          refreshAggregate();
         }
-        return uploadedUris;
+      };
+      try {
+        const queue = uploadQueue;
+        await mapWithConcurrency(queue, 3, processItem);
+        const settled = (status) => uploadQueue.filter((item) => item.status === status).length;
+        const failed = settled("failed");
+        const skipped = settled("skipped");
+        if (failed || skipped) {
+          notice = text.uploadFinished.replace("{done}", String(settled("done"))).replace("{skipped}", String(skipped)).replace("{failed}", String(failed));
+        }
+        if (!failed && !skipped && !controller.signal.aborted) {
+          // Fully successful batches fold the panel away after a beat; any
+          // failure, skip, or cancel keeps it open so row states stay visible.
+          setTimeout(() => { if (uploadQueue === queue) uploadPanelOpen = false; }, 2500);
+        }
+        if (controller.signal.aborted) throw new DOMException("Upload cancelled", "AbortError");
+        return uploadQueue.filter((item) => item.status === "done").map((item) => item.targetUri);
       } finally {
         uploadController = undefined;
       }
     }, uploadUri);
+  }
+
+  const statusLabel = (item) => {
+    if (item.status === "uploading") return item.confirming ? text.confirmingUpload : `${Math.min(100, Math.floor((item.sent / (item.file.size || 1)) * 100))}%`;
+    return { pending: text.statusPending, done: text.statusDone, failed: text.statusFailed, skipped: text.statusSkipped, cancelled: text.statusCancelled }[item.status] || "";
+  };
+
+  const uploadSummary = () => {
+    const count = (status) => uploadQueue.filter((item) => item.status === status).length;
+    const done = count("done");
+    const failed = count("failed");
+    const skipped = count("skipped");
+    const summary = `${done}/${uploadQueue.length}`;
+    if (!failed && !skipped) return summary;
+    return `${summary} · ${text.statusFailed} ${failed} · ${text.statusSkipped} ${skipped}`;
+  };
+
+  const canDrop = () => !readOnly && !loading && !operating && !(bucketMode && currentUri === "s3:/");
+
+  async function handleDrop(event) {
+    try {
+      const files = await collectDroppedFiles(event.dataTransfer);
+      openUploadDialog(files, false);
+    } catch (cause) {
+      error = cause?.message || String(cause);
+    }
   }
 
   async function uploadClipboardImage() {
@@ -786,8 +925,11 @@
     if (ok) setTimeout(() => { if (dialog?.kind === "clipboard-upload") dialog.copied = ""; }, 2000);
   }
 
-  function settleOverwrite(accept) {
-    if (dialog?.kind === "overwrite") dialog.resolve?.(accept);
+  function settleOverwrite(decision) {
+    if (dialog?.kind !== "overwrite") return;
+    dialog.resolve?.(decision);
+    dialogOpen = false;
+    dialog = null;
   }
 
   function handleDialogOpenChange(open) {
@@ -795,6 +937,7 @@
     if (!open) {
       settleOverwrite(false);
       dialog = null;
+      pendingUpload = null;
     }
   }
 
@@ -802,6 +945,7 @@
     settleOverwrite(false);
     dialogOpen = false;
     dialog = null;
+    pendingUpload = null;
   }
 
   function closeContextMenu() {
@@ -810,7 +954,7 @@
 
   async function confirmDialog() {
     const active = dialog;
-    if (!active || active.kind === "share" || active.kind === "versions" || active.kind === "details" || active.kind === "copy-path" || active.kind === "clipboard-upload") return;
+    if (!active || active.kind === "share" || active.kind === "versions" || active.kind === "details" || active.kind === "copy-path" || active.kind === "clipboard-upload" || active.kind === "upload") return;
     if (active.kind === "overwrite") {
       active.resolve?.(true);
       dialogOpen = false;
@@ -1024,7 +1168,7 @@
 
 <svelte:head><title>S3</title></svelte:head>
 
-<main>
+<main ondragenter={(event) => { if (!canDrop() || !event.dataTransfer?.types?.includes("Files")) return; event.preventDefault(); dragDepth += 1; }} ondragover={(event) => { if (canDrop()) event.preventDefault(); }} ondragleave={() => { dragDepth = Math.max(0, dragDepth - 1); }} ondrop={(event) => { dragDepth = 0; if (!canDrop()) return; event.preventDefault(); void handleDrop(event); }}>
   <div class="toolbar">
     <div class="path-group">
       <Button variant="outline" size="icon-sm" aria-pressed={treeVisible} aria-label={text.folderTree} title={text.folderTree} onclick={() => (treeVisible = !treeVisible)}><ListTree size={14} /></Button>
@@ -1055,11 +1199,12 @@
       {#if checkedUris.length}<Button variant="outline" size="sm" disabled={loading || operating} title={text.downloadZipCount.replace("{count}", checkedUris.length)} onclick={() => downloadArchive(checkedUris)}><FileArchive size={14} />{text.downloadZipCount.replace("{count}", checkedUris.length)}</Button>{/if}
       {#if checkedUris.length && !readOnly}<Button variant="destructive" size="sm" disabled={loading || operating} onclick={deleteChecked}><Trash2 size={14} />{text.deleteCount.replace("{count}", checkedUris.length)}</Button>{/if}
     </div>
-    <input bind:this={uploadInput} hidden type="file" multiple onchange={uploadFiles} />
-    <input bind:this={folderUploadInput} hidden type="file" multiple webkitdirectory onchange={uploadFiles} />
+    <input bind:this={uploadInput} hidden type="file" multiple onchange={(event) => uploadFiles(event, false)} />
+    <input bind:this={folderUploadInput} hidden type="file" multiple webkitdirectory onchange={(event) => uploadFiles(event, true)} />
   </div>
   {#if transfer}<div class="transfer" role="status" aria-live="polite"><span class="transfer-label">{(transfer.saving ? text.saving : transfer.confirming ? text.confirmingUpload : transfer.kind === "upload" ? text.uploading : text.downloading) + " " + transfer.name}{transfer.fileCount > 1 ? ` (${transfer.fileIndex}/${transfer.fileCount})` : ""}</span><div class="transfer-bar"><div class="transfer-fill" style={`width: ${transferPercent()}%`}></div></div><span class="transfer-percent">{transferPercent()}%</span><Button variant="ghost" size="sm" disabled={transfer.saving} onclick={() => (transfer.kind === "upload" ? uploadController : downloadController)?.abort()}>{text.cancel}</Button></div>{/if}
   {#if error}<div class="error">{text.error}: {error}</div>{/if}
+  {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   <section class="split" style={`grid-template-columns: ${treeVisible ? `${treeWidth}px 6px minmax(220px, ${leftWidth}fr) 6px minmax(280px, ${100 - leftWidth}fr)` : `minmax(240px, ${leftWidth}%) 6px minmax(280px, 1fr)`}`}>
     {#if treeVisible}
       <div class="tree-panel"><FolderTree nodes={treeNodes} currentUri={currentUri} {text} rootLabel={text.rootLabel} onToggle={toggleTreeNode} onSelect={selectTreeNode} onLoadMore={continueTrees} /></div>
@@ -1069,6 +1214,29 @@
     <button class="splitter" aria-label="Resize panels" onpointerdown={startResize}></button>
     <PreviewPane {selected} {preview} metadata={entryMetadata} {text} {readOnly} onRename={renameEntry} onDelete={deleteEntry} onDownload={downloadEntry} onShare={shareEntry} onVersions={showVersions} onDetails={showDetails} onSheetChange={(value) => (preview = value)} />
   </section>
+  {#if uploadQueue.length && uploadPanelOpen}
+    <aside class="upload-panel" aria-label={text.uploadQueue}>
+      <div class="upload-panel-head">
+        <strong>{text.uploadQueue}</strong>
+        <span class="upload-panel-summary">{uploadSummary()}</span>
+        <Button variant="ghost" size="icon-sm" aria-label={text.close} title={text.close} onclick={() => (uploadPanelOpen = false)}><X size={14} /></Button>
+      </div>
+      <div class="upload-panel-list">
+        {#each uploadQueue as item (item.id)}
+          <div class="upload-row" class:failed={item.status === "failed"} title={item.error || ""}>
+            <span class="upload-row-name">{item.name}</span>
+            <span class="upload-row-status">{statusLabel(item)}</span>
+            {#if item.status === "pending" || item.status === "uploading"}
+              <button type="button" class="upload-row-action" aria-label={text.cancel} title={text.cancel} onclick={() => item.controller?.abort()}>✕</button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </aside>
+  {/if}
+  {#if dragDepth > 0}
+    <div class="drop-overlay"><div class="drop-card"><Upload size={22} /><span>{text.dropUpload}</span></div></div>
+  {/if}
   {#if contextMenu}
     <div class="context-menu" data-dbx-context-menu role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`} oncontextmenu={(event) => event.preventDefault()}>
       {#if !contextMenu.entry}
@@ -1092,10 +1260,11 @@
     {#if dialog}
       <Dialog.Content showCloseButton={false} class={`dialog-content${dialog.kind === "versions" ? " versions-dialog" : ""}`}>
         <Dialog.Header>
-          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "details" ? text.details : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : dialog.kind === "copy-path" ? text.copyPath : dialog.kind === "clipboard-upload" ? text.clipboardUploaded : dialog.kind === "overwrite" ? text.overwriteTitle : text.newFolder}</Dialog.Title>
+          <Dialog.Title>{dialog.kind === "versions" ? text.versions : dialog.kind === "details" ? text.details : dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : dialog.kind === "rename" ? text.rename : dialog.kind === "share" ? text.share : dialog.kind === "copy-path" ? text.copyPath : dialog.kind === "clipboard-upload" ? text.clipboardUploaded : dialog.kind === "upload" ? text.upload : dialog.kind === "overwrite" ? text.overwriteTitle : text.newFolder}</Dialog.Title>
           {#if dialog.kind === "delete"}<Dialog.Description>{text.confirmDelete.replace("{name}", dialog.entry.name)}</Dialog.Description>
           {:else if dialog.kind === "delete-batch"}<Dialog.Description>{text.confirmDeleteCount.replace("{count}", dialog.count)}</Dialog.Description>
           {:else if dialog.kind === "overwrite"}<Dialog.Description>{text.confirmOverwrite.replace("{name}", dialog.name)}</Dialog.Description>
+          {:else if dialog.kind === "upload"}<Dialog.Description>{text.selectedFiles.replace("{count}", dialog.count).replace("{size}", formatObjectSize(dialog.size, text.locale))}{#if dialog.folder} · {text.uploadFolder}{/if}</Dialog.Description>
           {:else if dialog.kind === "share" || dialog.kind === "versions" || dialog.kind === "details" || dialog.kind === "copy-path" || dialog.kind === "clipboard-upload"}<Dialog.Description>{dialog.entry.name}</Dialog.Description>{/if}
         </Dialog.Header>
         {#if dialog.kind === "share"}
@@ -1159,6 +1328,11 @@
             <div class="share-hint">{text.clipboardLinkExpires}</div>
             {#if dialog.copyBlocked}<div class="share-hint">{text.copyBlocked}</div>{/if}
           </div>
+        {:else if dialog.kind === "upload"}
+          {#if dialog.folder}<p class="share-hint">{text.folderUploadHint}</p>{/if}
+          <label class="dialog-field">{text.uploadTo}<input bind:this={uploadTargetInput} bind:value={dialog.value} spellcheck="false" aria-label={text.uploadTo} onkeydown={(event) => { if (event.key === "Enter") { event.preventDefault(); void confirmUploadTarget(); } }} /></label>
+          <p class="share-hint">{text.uploadTargetHint}</p>
+          {#if dialog.error}<div class="share-error">{dialog.error}</div>{/if}
         {:else if dialog.kind === "overwrite"}
           <p class="share-hint">{text.confirmOverwriteHint}</p>
         {:else if dialog.kind !== "delete" && dialog.kind !== "delete-batch"}
@@ -1176,8 +1350,18 @@
           {:else if dialog.kind === "clipboard-upload"}
             <Button onclick={cancelDialog}>{text.close}</Button>
           {:else if dialog.kind === "overwrite"}
+            {#if dialog.batch}
+              <Button variant="outline" size="sm" onclick={() => settleOverwrite("skip")}>{text.skipFile}</Button>
+              <Button variant="outline" size="sm" onclick={() => settleOverwrite("skipAll")}>{text.skipAll}</Button>
+              <Button variant="outline" size="sm" onclick={() => settleOverwrite("overwriteAll")}>{text.overwriteAll}</Button>
+              <Button variant="destructive" size="sm" onclick={() => settleOverwrite("overwrite")}>{text.overwrite}</Button>
+            {:else}
+              <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
+              <Button variant="destructive" onclick={confirmDialog}>{text.overwrite}</Button>
+            {/if}
+          {:else if dialog.kind === "upload"}
             <Button variant="outline" onclick={cancelDialog}>{text.cancel}</Button>
-            <Button variant="destructive" onclick={confirmDialog}>{text.overwrite}</Button>
+            <Button onclick={confirmUploadTarget}><Upload size={14} />{text.upload}</Button>
           {:else}
             <Button variant={dialog.kind === "delete" || dialog.kind === "delete-batch" ? "destructive" : "default"} onclick={confirmDialog}>{dialog.kind === "delete" || dialog.kind === "delete-batch" ? text.delete : text.confirm}</Button>
           {/if}
@@ -1264,4 +1448,18 @@
   .context-menu button:hover, .context-menu button:focus-visible { color: var(--color-accent-foreground, var(--color-foreground, CanvasText)); background: var(--color-accent, var(--color-muted, color-mix(in srgb, CanvasText 7%, transparent))); outline: none; }
   .context-menu button.danger { color: var(--color-destructive, #dc2626); }
   .context-menu button.danger:hover, .context-menu button.danger:focus-visible { color: var(--color-destructive, #dc2626); background: color-mix(in srgb, var(--color-destructive, #dc2626) 10%, transparent); }
+  .notice { margin: 8px 0; padding: 10px; border: 1px solid color-mix(in srgb, var(--color-primary, #6d5dfc) 35%, transparent); border-radius: 8px; color: var(--color-foreground, CanvasText); font-size: 12px; }
+  .drop-overlay { position: fixed; z-index: 500; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, Canvas 60%, transparent); }
+  .drop-card { display: flex; align-items: center; gap: 10px; padding: 18px 26px; border: 2px dashed var(--color-primary, #6d5dfc); border-radius: 12px; color: var(--color-foreground, CanvasText); background: var(--color-background, Canvas); font-size: 14px; }
+  .upload-panel { position: fixed; z-index: 400; right: 14px; bottom: 14px; width: min(380px, calc(100vw - 28px)); max-height: 46vh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border, color-mix(in srgb, CanvasText 14%, transparent)); border-radius: 10px; background: var(--color-background, Canvas); box-shadow: 0 12px 32px color-mix(in srgb, CanvasText 20%, transparent); }
+  .upload-panel-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--color-border, color-mix(in srgb, CanvasText 12%, transparent)); font-size: 12px; }
+  .upload-panel-head strong { flex: 0 0 auto; font-weight: 600; }
+  .upload-panel-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-variant-numeric: tabular-nums; }
+  .upload-panel-list { overflow-y: auto; padding: 4px; }
+  .upload-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12px; }
+  .upload-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .upload-row-status { flex: 0 0 auto; color: var(--color-muted-foreground, color-mix(in srgb, CanvasText 55%, transparent)); font-variant-numeric: tabular-nums; }
+  .upload-row.failed .upload-row-status { color: var(--color-destructive, #dc2626); }
+  .upload-row-action { flex: 0 0 auto; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; color: inherit; border: 0; border-radius: 4px; background: transparent; cursor: pointer; }
+  .upload-row-action:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
 </style>
